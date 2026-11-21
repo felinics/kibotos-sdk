@@ -11,4 +11,4 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 bin/
-/cli/kibotos
+/cli/kibo

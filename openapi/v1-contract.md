@@ -1,6 +1,6 @@
 # Kibotos v1 API & CLI Device Auth Contract (Frozen Phase 0)
 
-This contract is the shared source of truth across `kibotos-cloud` (`cmd/openapi`, `region-api`, `console-api`) and `kibotos-sdk` (Go SDK, TypeScript SDK, Python SDK, `kibotos` CLI, and `usekibo` skill).
+This contract is the shared source of truth across `kibotos-cloud` (`cmd/openapi`, `region-api`, `console-api`) and `kibotos-sdk` (Go SDK, TypeScript SDK, Python SDK, `kibo` CLI, and `use-kibo` skill).
 
 ## 1. Base URL, Auth & Common Conventions
 
@@ -211,7 +211,7 @@ Base URL: `<console_url>/api` (e.g. `https://console.kibo.to/api` or `http://loc
 
 1. **Start device session** (unauthenticated):
    - `POST /api/auth/device/start`
-   - Body: `{ "client_name": "kibotos-cli", "device_name": "MacBook Pro" }` (both optional)
+   - Body: `{ "client_name": "kibo", "device_name": "MacBook Pro" }` (both optional)
    - Response `201`:
      ```json
      {
