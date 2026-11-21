@@ -1,0 +1,138 @@
+---
+title: Errors & Retries
+description: Handle typed KibotosError subclasses, automatic retries, Retry-After backoff, Idempotency-Key safety, and AbortSignal cancellation in @kibotos/sdk.
+---
+
+`@kibotos/sdk` provides typed errors, safe automatic retries for transient failures, automatic `Idempotency-Key` generation on `POST` mutations, and first-class `AbortSignal` support.
+
+## Error Hierarchy
+
+Every error thrown by `@kibotos/sdk` extends `KibotosError`:
+
+```text
+KibotosError
+├── APIConnectionError          (network failure or client-side request timeout)
+└── KibotosAPIError             (non-2xx HTTP response)
+    ├── AuthenticationError     (HTTP 401)
+    ├── PermissionDeniedError   (HTTP 403)
+    ├── NotFoundError           (HTTP 404)
+    ├── WaitTimeoutError        (HTTP 408 wait_timeout)
+    ├── ConflictError           (HTTP 409)
+    │   └── UnexpectedStatusError (HTTP 409 with code 'unexpected_status')
+    └── RateLimitError          (HTTP 429, exposes retryAfterMs)
+```
+
+### `KibotosAPIError` Properties
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `status` | `number` | HTTP status code returned by the API. |
+| `code` | `string` | Machine-readable error code (e.g. `'workspace_not_found'`, `'invalid_state'`). |
+| `message` | `string` | Human-readable error message. |
+| `requestId` | `string \| undefined` | Server `request_id` (or `Request-Id` response header) for support and tracing. |
+| `retryable` | `boolean` | Whether the API marked this error as safe to retry. |
+| `details` | `Record<string, unknown> \| undefined` | Optional structured metadata from the API error envelope. |
+| `headers` | `Headers \| undefined` | Raw HTTP response headers. |
+
+`RateLimitError` additionally exposes `retryAfterMs: number | undefined`, parsed from the response's `Retry-After` header (supporting both delta-seconds and HTTP-date formats).
+
+### Catching Specific Errors
+
+```ts
+import {
+  APIConnectionError,
+  AuthenticationError,
+  ConflictError,
+  Kibotos,
+  KibotosAPIError,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
+  UnexpectedStatusError,
+  WaitTimeoutError,
+} from '@kibotos/sdk';
+
+const client = new Kibotos();
+
+try {
+  await client.workspaces.wait('wks_01j9...', {
+    status: 'running',
+    timeoutSeconds: 60,
+  });
+} catch (err) {
+  if (err instanceof AuthenticationError) {
+    console.error('Check KIBOTOS_API_KEY:', err.requestId);
+  } else if (err instanceof PermissionDeniedError) {
+    console.error('Quota or permission error:', err.code, err.details);
+  } else if (err instanceof NotFoundError) {
+    console.error('Workspace does not exist:', err.code);
+  } else if (err instanceof UnexpectedStatusError) {
+    console.error('Workspace reached unexpected state:', err.details);
+  } else if (err instanceof WaitTimeoutError) {
+    console.error('Timed out waiting:', err.details);
+  } else if (err instanceof ConflictError) {
+    console.error('State conflict:', err.code, err.message);
+  } else if (err instanceof RateLimitError) {
+    console.error('Rate limited; retry after ms:', err.retryAfterMs);
+  } else if (err instanceof KibotosAPIError) {
+    console.error('API error:', err.status, err.code, err.requestId);
+  } else if (err instanceof APIConnectionError) {
+    console.error('Network or timeout failure:', err.message);
+  } else {
+    throw err;
+  }
+}
+```
+
+## Automatic Retries & `Retry-After`
+
+By default, `new Kibotos()` retries up to `maxRetries: 3` times with exponential backoff and jitter (`500ms` initial delay, capped at `8000ms`, jitter factor `[0.5, 1.0)`).
+
+Requests are automatically retried when:
+
+- A transient network or timeout error occurs (`APIConnectionError`)
+- The API returns HTTP `429`, `500`, `502`, `503`, or `504`
+- The API returns `error.retryable === true` (except `408 wait_timeout` inside `wait()`, which is handled directly by the chunked wait loop)
+
+When the server includes a `Retry-After` header (delta-seconds or HTTP-date), the SDK honors that exact delay instead of exponential backoff.
+
+To disable retries globally:
+
+```ts
+const client = new Kibotos({ maxRetries: 0 });
+```
+
+## Idempotency (`Idempotency-Key`)
+
+For every `POST` request (`workspaces.create`, `workspaces.start`, `workspaces.stop`, `workspaces.setTimeout`, `volumes.create`, `volumes.resize`, `exposures.create`), the SDK automatically generates a UUID v4 `Idempotency-Key` header if one is not provided, and **reuses the exact same key across all retry attempts**.
+
+To supply your own deterministic key across process restarts or job retries:
+
+```ts
+const workspace = await client.workspaces.create(
+  {
+    name: 'job-42',
+    template: { id: 'python-3.12' },
+  },
+  {
+    idempotencyKey: 'job-42-workspace-create-v1',
+  },
+);
+```
+
+## Request Timeouts & `AbortSignal` Cancellation
+
+Pass `signal` or `timeoutMs` in `RequestOptions` on any method to cancel in-flight requests, pending retry backoff sleeps, or chunked `wait()` loops:
+
+```ts
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error('User cancelled')), 10_000);
+
+const workspace = await client.workspaces.wait(
+  'wks_01j9...',
+  { status: 'running', timeoutSeconds: 180 },
+  { signal: controller.signal },
+);
+```
+
+Caller-initiated aborts propagate immediately without triggering retries.

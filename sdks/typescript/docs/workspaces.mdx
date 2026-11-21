@@ -1,0 +1,188 @@
+---
+title: Workspaces
+description: Create, list, update, start, stop, configure timeouts and networking, attach volumes, and wait for Kibotos workspaces with @kibotos/sdk.
+---
+
+Manage microVM workspaces through `client.workspaces` (`WorkspacesResource`).
+
+## Create a Workspace
+
+`client.workspaces.create(body: CreateWorkspaceRequest, opts?: RequestOptions): Promise<Workspace>`
+
+Creates a workspace asynchronously (`POST /v1/workspaces`, HTTP `202 Accepted`). Only `template.id` is required.
+
+```ts
+import { Kibotos, type CreateWorkspaceRequest } from '@kibotos/sdk';
+
+const client = new Kibotos();
+
+const req: CreateWorkspaceRequest = {
+  name: 'ml-sandbox',
+  zone: 'global-1',
+  template: { id: 'python-3.12', revision: 'rev_20260101' },
+  resources: { vcpus: 4, memory_mib: 8192, disk_mib: 20480 },
+  network: { mode: 'public_internet' },
+  volume: { id: 'vol_01j9...', mount_path: '/data', delete_with_workspace: false },
+  timeout: { seconds: 3600, action: 'stop' },
+  labels: { team: 'ml', env: 'staging' },
+};
+
+const created = await client.workspaces.create(req);
+console.log(created.id, created.status); // e.g. wks_... creating
+```
+
+### `CreateWorkspaceRequest` Fields
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `template` | `WorkspaceTemplateInput` (`{ id: string; revision?: string }`) | Yes | Template ID and optional pinned revision. |
+| `name` | `string` | No | Human-readable workspace name. |
+| `zone` | `string` | No | Target compute zone ID (defaults to organization default zone). |
+| `resources` | `WorkspaceResourcesInput` (`{ vcpus?: number; memory_mib?: number; disk_mib?: number }`) | No | Compute resource overrides. |
+| `network` | `WorkspaceNetworkInput` (`{ mode: 'public_internet' \| 'deny_all' }`) | No | Initial outbound network policy. |
+| `volume` | `WorkspaceVolumeAttachmentInput` (`{ id: string; mount_path?: string; delete_with_workspace?: boolean }`) | No | Persistent volume to attach at creation time (must be in the same zone). |
+| `timeout` | `WorkspaceTimeoutInput` (`{ seconds: number; action?: 'stop' \| 'delete' }`) | No | Auto-timeout policy. |
+| `labels` | `Record<string, string>` | No | Key-value metadata labels. |
+
+## Wait for a Target Status
+
+`client.workspaces.wait(id: string, params: WaitWorkspaceParams, opts?: RequestOptions): Promise<Workspace>`
+
+Long-polls `GET /v1/workspaces/{id}/wait` until the workspace reaches one of the requested statuses. When `timeoutSeconds` exceeds the server's 60-second chunk limit, the SDK automatically loops across `<= 60s` server wait calls until the total budget elapses.
+
+```ts
+const workspace = await client.workspaces.wait(created.id, {
+  status: ['running', 'failed'],
+  timeoutSeconds: 180,
+});
+
+if (workspace.status === 'failed') {
+  console.error('Provisioning failed:', workspace.failure?.code, workspace.failure?.message);
+}
+```
+
+- `params.status`: A single `WorkspaceStatus` or an array of `WorkspaceStatus[]` (`'creating'`, `'running'`, `'stopping'`, `'stopped'`, `'starting'`, `'deleting'`, `'failed'`, `'unknown'`).
+- `params.timeoutSeconds`: Total wait budget in seconds (defaults to `30`).
+- Throws `WaitTimeoutError` (`408`) if the total timeout elapses, or `UnexpectedStatusError` (`409`) if the workspace enters a terminal/unexpected status not listed in `status`.
+
+## List and Iterate Workspaces
+
+### Single Page (`list`)
+
+`client.workspaces.list(params?: ListWorkspacesParams, opts?: RequestOptions): Promise<MultiZonePage<Workspace>>`
+
+```ts
+const page = await client.workspaces.list({
+  status: 'running',
+  zone: 'global-1',
+  labels: { team: 'ml' },
+  limit: 20,
+});
+
+console.log('Workspaces:', page.data.length);
+console.log('Next token:', page.next_page_token);
+if (page.unavailable_zones.length > 0) {
+  console.warn('Unavailable zones:', page.unavailable_zones);
+}
+```
+
+`ListWorkspacesParams` supports `status` (single `WorkspaceStatus` or `WorkspaceStatus[]`), `zone`, `labels` (serialized as `label.<key>=<value>`), `limit`, and `page_token`.
+
+### Auto-Pagination (`iterate`)
+
+`client.workspaces.iterate(params?: ListWorkspacesParams, opts?: RequestOptions): AsyncIterable<Workspace>`
+
+Lazily fetches all pages until `next_page_token` is `null`:
+
+```ts
+for await (const ws of client.workspaces.iterate({
+  status: 'running',
+  labels: { env: 'prod' },
+  limit: 50,
+})) {
+  console.log(ws.id, ws.name, ws.zone);
+}
+```
+
+## Get, Update, and Delete
+
+```ts
+// Fetch a workspace by ID
+const ws = await client.workspaces.get('wks_01j9...');
+
+// Update name and/or labels (pass null to clear name or delete a label key)
+const updated = await client.workspaces.update(ws.id, {
+  name: 'renamed-sandbox',
+  labels: {
+    owner: 'platform',
+    deprecated_tag: null, // removes the label
+  },
+});
+
+// Clear the workspace name completely
+await client.workspaces.update(ws.id, { name: null });
+
+// Delete asynchronously (202 Accepted)
+const deleting = await client.workspaces.delete(ws.id);
+console.log(deleting.status); // 'deleting'
+```
+
+## Start and Stop
+
+```ts
+// Gracefully stop a running workspace
+await client.workspaces.stop(ws.id);
+await client.workspaces.wait(ws.id, { status: 'stopped', timeoutSeconds: 60 });
+
+// Force an immediate power-off
+await client.workspaces.stop(ws.id, { force: true });
+
+// Start a stopped workspace (optionally configuring a fresh timeout)
+await client.workspaces.start(ws.id, {
+  timeout: { seconds: 7200, action: 'stop' },
+});
+await client.workspaces.wait(ws.id, { status: 'running', timeoutSeconds: 120 });
+```
+
+## Update Timeout Policy
+
+`client.workspaces.setTimeout(id: string, body: SetWorkspaceTimeoutRequest, opts?: RequestOptions): Promise<Workspace>`
+
+```ts
+const extended = await client.workspaces.setTimeout(ws.id, {
+  seconds: 7200,
+  action: 'stop', // 'stop' | 'delete'
+});
+console.log('New expiry:', extended.timeout?.expires_at);
+```
+
+## Configure Outbound Network
+
+`client.workspaces.setNetwork(id: string, body: SetWorkspaceNetworkRequest, opts?: RequestOptions): Promise<Workspace>`
+
+Switch outbound connectivity between `'public_internet'` and `'deny_all'`:
+
+```ts
+const isolated = await client.workspaces.setNetwork(ws.id, {
+  mode: 'deny_all',
+});
+console.log('Network mode:', isolated.network.mode, 'applied:', isolated.network.applied);
+```
+
+## Attach and Detach Volumes
+
+Persistent volumes must be in the same zone as the workspace and are attached or detached while the workspace is `'stopped'`:
+
+```ts
+// Attach a volume
+const withVolume = await client.workspaces.attachVolume(ws.id, {
+  id: 'vol_01j9...',
+  mount_path: '/data',
+  delete_with_workspace: false,
+});
+console.log('Mounted at:', withVolume.volume?.mount_path);
+
+// Detach the currently attached volume
+const detached = await client.workspaces.detachVolume(ws.id);
+console.log('Volume:', detached.volume); // null
+```

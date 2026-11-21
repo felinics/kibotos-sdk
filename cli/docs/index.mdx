@@ -1,0 +1,117 @@
+---
+title: kibo CLI
+description: Install kibo, run your first commands, and learn global flags, JSON output, and exit codes for the official Kibotos CLI.
+---
+
+`kibo` is the official command-line interface for **Kibotos** (Kibo). Provision and manage cloud microVM workspaces, persistent volumes, and temporary HTTPS port exposures from your terminal, CI pipelines, or AI coding agents.
+
+## Installation
+
+### Download a Pre-Built Binary
+
+Pre-built archives (`linux`, `darwin`, `windows` for `amd64` and `arm64`) with `SHA256SUMS` are published on [GitHub Releases](https://github.com/felinics/kibotos-sdk/releases) under tags `cli/v*`.
+
+Download and unpack the archive for your platform, then place `kibo` on your `PATH`:
+
+```bash
+tar -xzf kibo_<version>_<os>_<arch>.tar.gz
+sudo mv kibo /usr/local/bin/kibo
+kibo version
+```
+
+### Build from Source
+
+Requires Go 1.24 or later:
+
+```bash
+git clone https://github.com/felinics/kibotos-sdk.git
+cd kibotos-sdk/cli
+go build -o /usr/local/bin/kibo ./cmd/kibo
+```
+
+## Quickstart
+
+```bash
+# 1. Sign in via your browser (Device Authorization Flow)
+kibo login
+
+# 2. Verify your active identity and accessible zones
+kibo whoami
+
+# 3. Discover available zones and templates
+kibo zone list
+kibo template list
+
+# 4. Create a workspace and wait until it is running
+kibo workspace create \
+  --template python-3.12 \
+  --name devbox \
+  --timeout 3600 \
+  --timeout-action stop \
+  --wait
+
+# 5. Expose port 8080 over a temporary HTTPS URL
+kibo exposure create wks_... --port 8080 --ttl 3600
+
+# 6. Clean up when finished
+kibo workspace delete wks_... --wait
+```
+
+## Command Overview
+
+| Command | Aliases | Subcommands |
+| --- | --- | --- |
+| `kibo login` | — | Interactive browser Device Flow or `--api-key` login |
+| `kibo logout` | — | Remove saved credentials for a profile |
+| `kibo whoami` | — | Show active profile, auth source, and live zone check |
+| `kibo profile` | `profiles` | `list`, `use <name>`, `delete <name>` |
+| `kibo workspace` | `ws`, `workspaces` | `list`, `get`, `create`, `update`, `delete`, `start`, `stop`, `timeout`, `network`, `volume attach\|detach`, `wait` |
+| `kibo volume` | `vol`, `volumes` | `list`, `get`, `create`, `update`, `resize`, `delete`, `wait` |
+| `kibo exposure` | `exp`, `exposures` | `list`, `get`, `create`, `revoke` |
+| `kibo zone` | `zones` | `list` |
+| `kibo template` | `tpl`, `templates` | `list`, `get`, `revisions`, `revision` |
+| `kibo version` | — | Print CLI version, Go SDK version, Go runtime, and platform |
+
+## Global Flags
+
+Available on every `kibo` command:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--json` | `false` | Output strictly valid JSON to `stdout` (shorthand for `-o json`). |
+| `-o`, `--output <format>` | `table` | Output format: `table` or `json`. |
+| `--profile <name>` | active profile | Named profile from `config.json` to use for this command. |
+| `--api-key <key>` | — | Override the Kibotos API key (`kb_...`) for this invocation. |
+| `--api-url <url>` | `https://api.kibo.to/v1` | Override the Kibotos v1 API base URL. |
+
+## Scripting & JSON Mode
+
+Pass `--json` (or `-o json`) whenever piping output to `jq`, scripts, or AI agents:
+
+- `stdout` contains **strictly valid JSON** on success.
+- Progress updates (such as `--wait` messages), interactive login URLs/codes, multi-zone warnings, and structured error envelopes are always written to `stderr`.
+
+In `--json` mode, errors are written to `stderr` using a consistent JSON envelope:
+
+```json
+{
+  "error": {
+    "code": "invalid_state",
+    "message": "Workspace must be stopped before attaching a volume",
+    "exit_code": 1,
+    "status": 409,
+    "request_id": "req_01j9...",
+    "retryable": false,
+    "hint": "Stop the workspace first with `kibo workspace stop <id> --wait`."
+  }
+}
+```
+
+## Exit Codes
+
+| Exit Code | Meaning | Recommended Handling |
+| --- | --- | --- |
+| `0` | Success | Parse `stdout` output. |
+| `1` | API or runtime error | Inspect `stderr` (`error.code`, `error.retryable`, `error.request_id`). Retry briefly if `retryable` is `true`. |
+| `2` | Usage, argument, or flag validation error | Fix command flags or arguments before retrying. |
+| `3` | Unauthenticated (no credentials or HTTP `401`) | Run `kibo login` or configure `KIBOTOS_API_KEY`. |

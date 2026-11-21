@@ -1,0 +1,97 @@
+---
+title: use-kibo Agent Skill
+description: Install and use the official use-kibo Agent Skill so Claude Code, Codex, Cursor, and Antigravity operate Kibo reliably via the kibo CLI.
+---
+
+**`use-kibo`** is the official Agent Skill for **Kibotos** (Kibo), located at `skills/use-kibo/` in the `felinics/kibotos-sdk` repository. It teaches AI coding agents how to verify authentication, drive `kibo` safely with `--json` and `--wait`, parse structured errors and exit codes, protect API keys, and confirm destructive operations.
+
+## What `use-kibo` Includes
+
+```text
+skills/use-kibo/
+├── SKILL.md                     # Preflight checks, operating discipline, and core recipes
+└── references/
+    ├── cli-reference.md         # Full kibo command tree, flags, precedence, and error codes
+    └── workflows.md             # End-to-end agent workflows and troubleshooting playbooks
+```
+
+When loaded, `use-kibo` instructs agents to:
+
+1. **Preflight with `kibo whoami --json`** before creating or mutating resources, guiding the user through `kibo login` (or `KIBOTOS_API_KEY`) on exit code `3` instead of guessing credentials.
+2. **Always pass `--json` (or `-o json`)** so `stdout` is strictly valid JSON while progress updates and structured errors stay on `stderr`.
+3. **Always pass `--wait`** on asynchronous lifecycle commands (`workspace create|start|stop|delete|network`, `volume create|resize|delete`).
+4. **Act on exit codes and `error.retryable`** (`0` success, `1` API/runtime error, `2` usage error, `3` unauthenticated).
+5. **Protect secrets and confirm destructive actions** before deleting workspaces/volumes, force-stopping, or revoking live exposures.
+
+## Prerequisite: Install & Authenticate `kibo`
+
+Make sure the `kibo` binary is on your `PATH` and authenticated:
+
+```bash
+kibo login
+kibo whoami --json
+```
+
+## Installing `use-kibo` in Your AI Coding Agent
+
+Clone or download `skills/use-kibo/` from [`felinics/kibotos-sdk`](https://github.com/felinics/kibotos-sdk):
+
+```bash
+git clone --depth 1 https://github.com/felinics/kibotos-sdk.git /tmp/kibotos-sdk
+```
+
+Then copy `skills/use-kibo` into your agent's skills directory:
+
+### Claude Code
+
+```bash
+# User-global skill
+mkdir -p ~/.claude/skills
+cp -R /tmp/kibotos-sdk/skills/use-kibo ~/.claude/skills/use-kibo
+
+# Or project-scoped skill
+mkdir -p .claude/skills
+cp -R /tmp/kibotos-sdk/skills/use-kibo .claude/skills/use-kibo
+```
+
+### OpenAI Codex
+
+```bash
+mkdir -p ~/.codex/skills
+cp -R /tmp/kibotos-sdk/skills/use-kibo ~/.codex/skills/use-kibo
+```
+
+### Cursor
+
+```bash
+# Project-scoped skill (or ~/.cursor/skills/use-kibo for global)
+mkdir -p .cursor/skills
+cp -R /tmp/kibotos-sdk/skills/use-kibo .cursor/skills/use-kibo
+```
+
+### Antigravity
+
+```bash
+# User-global skill
+mkdir -p ~/.gemini/antigravity/skills
+cp -R /tmp/kibotos-sdk/skills/use-kibo ~/.gemini/antigravity/skills/use-kibo
+
+# Or workspace-scoped skill
+mkdir -p .agents/skills
+cp -R /tmp/kibotos-sdk/skills/use-kibo .agents/skills/use-kibo
+```
+
+Clean up the temporary clone afterwards:
+
+```bash
+rm -rf /tmp/kibotos-sdk
+```
+
+## Example Prompts
+
+Once `use-kibo` is installed, ask your agent naturally:
+
+- *"Spin up a Kibo `python-3.12` workspace with 2 vCPUs, 4 GiB RAM, and a 1-hour auto-stop timeout, wait until it's running, and expose port 8080."*
+- *"Create a 50 GiB persistent Kibo volume in `global-1`, attach it at `/data` to a new workspace, and return the workspace ID."*
+- *"Lock down outbound internet access (`deny_all`) on workspace `wks_...` and confirm the policy is applied."*
+- *"List all running Kibo workspaces labeled `env=staging` and check their auto-timeout expiry."*

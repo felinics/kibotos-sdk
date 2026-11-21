@@ -1,0 +1,10 @@
+{
+  "title": "kibo CLI",
+  "pages": [
+    "index",
+    "authentication",
+    "workspaces",
+    "volumes-and-exposures",
+    "use-kibo-skill"
+  ]
+}

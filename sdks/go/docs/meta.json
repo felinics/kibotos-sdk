@@ -1,0 +1,11 @@
+{
+  "title": "Go SDK",
+  "pages": [
+    "index",
+    "workspaces",
+    "volumes",
+    "exposures",
+    "templates-and-zones",
+    "errors-and-retries"
+  ]
+}

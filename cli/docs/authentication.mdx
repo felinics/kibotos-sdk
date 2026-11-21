@@ -1,0 +1,118 @@
+---
+title: Authentication & Profiles
+description: Authenticate kibo using browser Device Authorization Flow or API keys, inspect sessions with whoami, and manage named profiles.
+---
+
+`kibo` supports interactive browser sign-in via the **Device Authorization Flow**, non-interactive API key authentication for CI and headless environments, and multiple named profiles.
+
+## Interactive Browser Login (`kibo login`)
+
+```bash
+kibo login
+```
+
+`kibo login` initiates a Device Authorization session against the Kibotos Console (`https://console.kibo.to`), prints a verification URL and one-time user code to `stderr`, opens your browser automatically, and polls until you approve the device. Once approved, a scoped API key and profile metadata (organization, user email, key ID, API URL) are saved locally.
+
+### Remote & SSH Sessions (`--no-browser`)
+
+When running over SSH or in a terminal without a local browser, pass `--no-browser` so `kibo` prints the verification URL and code without trying to launch a browser:
+
+```bash
+kibo login --no-browser --device-name "build-box-01"
+```
+
+### Login Flags
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--console-url <url>` | `https://console.kibo.to` | Kibotos Console base URL for device authorization. |
+| `--device-name <label>` | system hostname | Device label shown during browser approval. |
+| `--no-browser` | `false` | Print the verification URL without opening a browser. |
+| `--api-key <kb_...>` | — | Non-interactive login using an existing API key. |
+| `--skip-verify` | `false` | Skip the live `GET /v1/zones` verification check when using `--api-key`. |
+| `--profile <name>` | active profile | Save credentials into a specific named profile. |
+| `--api-url <url>` | `https://api.kibo.to/v1` | Override the API base URL stored in the profile. |
+
+## Non-Interactive & CI Authentication (`--api-key`)
+
+Save an API key to a profile non-interactively (verifies connectivity via `GET /v1/zones` unless `--skip-verify` is set):
+
+```bash
+kibo login --api-key kb_... --profile ci
+```
+
+Or avoid writing credentials to disk altogether by setting an environment variable in CI:
+
+```bash
+export KIBOTOS_API_KEY="kb_..."
+kibo whoami --json
+```
+
+## Verify Active Identity (`kibo whoami`)
+
+Inspect the resolved profile, authentication source (`flag`, `env:KIBOTOS_API_KEY`, `env:KIBO_API_KEY`, or `profile:<name>`), masked API key (`kb_...xxxx`), organization metadata, and live accessible zones:
+
+```bash
+kibo whoami
+kibo whoami --json
+```
+
+Pass `--offline` to inspect local configuration without making a network request:
+
+```bash
+kibo whoami --offline --json
+```
+
+If no credentials are configured or the API returns HTTP `401`, `kibo whoami` exits with code `3`.
+
+## Log Out (`kibo logout`)
+
+Remove saved credentials for the active profile (or a specific profile via `--profile`):
+
+```bash
+kibo logout
+kibo logout --profile staging
+```
+
+## Manage Named Profiles (`kibo profile`)
+
+Aliases: `profiles`.
+
+```bash
+# List all saved profiles (* marks the active profile)
+kibo profile list
+
+# Switch the default active profile
+kibo profile use prod
+
+# Delete a saved profile
+kibo profile delete staging
+```
+
+You can also target a profile for a single command without switching your default:
+
+```bash
+kibo workspace list --profile prod --json
+```
+
+## Configuration File & Precedence
+
+Profiles are stored atomically in JSON with `0600` file permissions inside a `0700` directory.
+
+### Config File Location (first match wins)
+
+1. `$KIBO_CONFIG_DIR/config.json`
+2. `$KIBOTOS_CONFIG_DIR/config.json`
+3. `$XDG_CONFIG_HOME/kibo/config.json`
+4. `~/.config/kibo/config.json`
+
+### Resolution Precedence (highest to lowest)
+
+| Setting | Precedence |
+| --- | --- |
+| **Profile** | `--profile` > `KIBO_PROFILE` > `KIBOTOS_PROFILE` > `current_profile` in `config.json` > `default` |
+| **API Key** | `--api-key` > `KIBOTOS_API_KEY` > `KIBO_API_KEY` > active profile `api_key` |
+| **API URL** | `--api-url` > `KIBOTOS_API_URL` > `KIBO_API_URL` > active profile `api_url` > `https://api.kibo.to/v1` |
+| **Console URL** | `--console-url` > `KIBOTOS_CONSOLE_URL` > `KIBO_CONSOLE_URL` > active profile `console_url` > `https://console.kibo.to` |
+
+> **Security**: `kibo whoami` and `kibo profile list` always mask API keys (`kb_...xxxx`). Avoid printing `~/.config/kibo/config.json` in logs or shared terminals.

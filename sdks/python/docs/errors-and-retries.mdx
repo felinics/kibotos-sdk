@@ -1,0 +1,113 @@
+---
+title: Errors & Retries
+description: Handle the KibotosError exception hierarchy, automatic retries with Retry-After backoff, and Idempotency-Key safety in Python.
+---
+
+The `kibotos` Python SDK maps every API and transport failure onto a structured exception hierarchy, retries transient failures automatically, and attaches safe `Idempotency-Key` headers to `POST` mutations.
+
+## Exception Hierarchy
+
+All SDK exceptions inherit from `KibotosError`:
+
+```text
+KibotosError
+├── APIConnectionError          (httpx.TransportError / network failure; exposes original_error)
+└── APIError                    (non-2xx HTTP response)
+    ├── AuthenticationError     (HTTP 401)
+    ├── PermissionDeniedError   (HTTP 403)
+    ├── NotFoundError           (HTTP 404)
+    ├── ConflictError           (HTTP 409)
+    │   └── UnexpectedStatusError (code == "unexpected_status")
+    ├── RateLimitError          (HTTP 429; exposes retry_after in seconds)
+    └── WaitTimeoutError        (HTTP 408 or code == "wait_timeout")
+```
+
+### `APIError` Attributes
+
+| Attribute | Type | Description |
+| --- | --- | --- |
+| `status` | `int` | HTTP status code returned by the API. |
+| `code` | `str` | Machine-readable error code (e.g. `"workspace_not_found"`, `"invalid_state"`). |
+| `message` | `str` | Human-readable error message. |
+| `request_id` | `str \| None` | Server `request_id` (or `Request-Id` response header) for support tracing. |
+| `retryable` | `bool` | Whether the API indicated the error is safe to retry. |
+| `details` | `dict[str, Any]` | Additional structured metadata from the error envelope (empty dict if omitted). |
+
+`RateLimitError` adds `retry_after: float | None` (delay in seconds parsed from `Retry-After`, supporting both numeric seconds and HTTP-date values). `APIConnectionError` adds `original_error: Exception | None`.
+
+### Handling Specific Errors
+
+```python
+from kibotos import (
+    APIConnectionError,
+    APIError,
+    AuthenticationError,
+    ConflictError,
+    Kibotos,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
+    UnexpectedStatusError,
+    WaitTimeoutError,
+)
+
+with Kibotos() as client:
+    try:
+        ws = client.workspaces.wait("wks_01j9...", status="running", timeout=60)
+    except AuthenticationError as err:
+        print("Invalid API key:", err.request_id)
+    except PermissionDeniedError as err:
+        print("Permission or quota error:", err.code, err.details)
+    except NotFoundError as err:
+        print("Workspace not found:", err.code)
+    except UnexpectedStatusError as err:
+        print("Workspace hit unexpected status:", err.details)
+    except WaitTimeoutError as err:
+        print("Wait timed out:", err.message)
+    except ConflictError as err:
+        print("Conflict:", err.code, err.message)
+    except RateLimitError as err:
+        print("Rate limited; retry after seconds:", err.retry_after)
+    except APIError as err:
+        print(f"API error [{err.status} {err.code}]: {err.message} ({err.request_id})")
+    except APIConnectionError as err:
+        print("Network error:", err, err.original_error)
+```
+
+## Automatic Retries & `Retry-After`
+
+By default, both `Kibotos` and `AsyncKibotos` retry up to `max_retries=3` times using exponential backoff with jitter (`initial_backoff=0.5` seconds, `max_backoff=8.0` seconds, uniform jitter in `[0.5, 1.0]`).
+
+Retries trigger automatically on:
+
+- `httpx.TransportError` (network disconnects, DNS/connect timeouts)
+- HTTP `429`, `500`, `502`, `503`, `504`
+- Any API response with `error.retryable == True` (except `wait_timeout`, which is managed by the `wait()` chunk loop)
+
+When the server returns a `Retry-After` header (seconds or HTTP-date), the transport sleeps for that exact duration instead of the exponential backoff delay.
+
+Customize or disable retries on client initialization:
+
+```python
+client = Kibotos(
+    max_retries=5,
+    initial_backoff=0.25,
+    max_backoff=10.0,
+)
+
+no_retry_client = Kibotos(max_retries=0)
+```
+
+## Idempotency (`Idempotency-Key`)
+
+Every `POST` mutation (`workspaces.create`, `workspaces.start`, `workspaces.stop`, `workspaces.set_timeout`, `volumes.create`, `volumes.resize`, `exposures.create`) automatically sends a generated UUID v4 `Idempotency-Key` header if `idempotency_key` is omitted, and **reuses that exact key across every retry attempt**.
+
+Pass an explicit `idempotency_key` when retrying work across separate processes or job queues:
+
+```python
+ws = client.workspaces.create(
+    template="python-3.12",
+    name="job-42",
+    idempotency_key="job-42-workspace-create-v1",
+)
+```

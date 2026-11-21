@@ -1,0 +1,108 @@
+---
+title: Errors & Retries
+description: Inspect *kibotos.APIError responses, use error helper predicates, configure automatic retries with Retry-After, and pass WithIdempotencyKey in Go.
+---
+
+The Go SDK returns structured `*kibotos.APIError` values for non-2xx responses, automatically retries transient failures with jittered exponential backoff, and protects every `POST` mutation with an `Idempotency-Key`.
+
+## `*kibotos.APIError`
+
+```go
+type APIError struct {
+	Code      string         `json:"code"`
+	Message   string         `json:"message"`
+	Status    int            `json:"status"`
+	RequestID string         `json:"request_id"`
+	Retryable bool           `json:"retryable"`
+	Details   map[string]any `json:"details,omitempty"`
+}
+```
+
+### Error Predicate Helpers
+
+All helpers work cleanly with wrapped errors via `errors.As`:
+
+| Helper | Matches |
+| --- | --- |
+| `kibotos.IsNotFound(err)` | HTTP `404` or codes `not_found`, `workspace_not_found`, `volume_not_found`, `exposure_not_found`, `template_not_found`, `template_revision_not_found`. |
+| `kibotos.IsUnauthenticated(err)` | HTTP `401` or code `unauthenticated`. |
+| `kibotos.IsRateLimited(err)` | HTTP `429` or code `rate_limited`. |
+| `kibotos.IsWaitTimeout(err)` | HTTP `408` or code `wait_timeout`. |
+| `kibotos.IsUnexpectedStatus(err)` | Code `unexpected_status` (HTTP `409` during `Wait`). |
+| `kibotos.IsRetryable(err)` | `apiErr.Retryable == true` or HTTP `429`, `500`, `502`, `503`, `504`. |
+
+### Handling Errors
+
+```go
+ws, err := client.Workspaces.Wait(ctx, "wks_01j9...", kibotos.WaitWorkspaceParams{
+	Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning},
+	Timeout:  time.Minute,
+})
+if err != nil {
+	switch {
+	case kibotos.IsUnauthenticated(err):
+		log.Fatal("invalid or missing KIBOTOS_API_KEY")
+	case kibotos.IsNotFound(err):
+		log.Fatal("workspace not found")
+	case kibotos.IsUnexpectedStatus(err):
+		log.Printf("workspace entered an unexpected status: %v", err)
+	case kibotos.IsWaitTimeout(err):
+		log.Printf("timed out waiting for running: %v", err)
+	case kibotos.IsRateLimited(err):
+		log.Printf("rate limited after retries: %v", err)
+	default:
+		var apiErr *kibotos.APIError
+		if errors.As(err, &apiErr) {
+			log.Fatalf("API error %d (%s): %s (request_id=%s, retryable=%t)",
+				apiErr.Status, apiErr.Code, apiErr.Message, apiErr.RequestID, apiErr.Retryable)
+		}
+		log.Fatal(err)
+	}
+}
+```
+
+## Automatic Retries & `Retry-After`
+
+By default, `Client` retries up to `DefaultMaxRetries` (`3`) times using exponential backoff with jitter (`500ms` min, `8s` max, jitter `[0.5, 1.0]`).
+
+Retries trigger automatically for:
+
+- Retryable network/transport errors (`net.Error`, `*net.OpError`, `io.EOF`, `io.ErrUnexpectedEOF`, attempt `context.DeadlineExceeded` while the caller's `ctx` is still active)
+- HTTP `429`, `500`, `502`, `503`, `504` (and `408` outside `Wait` calls)
+- Any API response with `apiErr.Retryable == true`
+
+On HTTP `429`, if the server returns a `Retry-After` header (seconds or HTTP-date), the client waits for that exact duration. Backoff sleeps always respect `ctx.Done()`.
+
+Configure retry settings with client options:
+
+```go
+client, err := kibotos.NewClient(
+	apiKey,
+	kibotos.WithMaxRetries(5),
+	kibotos.WithRetryBackoff(250*time.Millisecond, 10*time.Second),
+)
+
+// Disable retries
+noRetryClient, err := kibotos.NewClient(apiKey, kibotos.WithMaxRetries(0))
+```
+
+## Idempotency (`WithIdempotencyKey`)
+
+Every `POST` mutation (`Workspaces.Create`, `Workspaces.Start`, `Workspaces.Stop`, `Workspaces.SetTimeout`, `Volumes.Create`, `Volumes.Resize`, `Exposures.Create`) automatically generates a UUID v4 `Idempotency-Key` header when omitted and reuses that exact key across retries.
+
+Supply your own deterministic key across restarts with `kibotos.WithIdempotencyKey`:
+
+```go
+ws, err := client.Workspaces.Create(
+	ctx,
+	kibotos.CreateWorkspaceParams{
+		Name:     "job-42",
+		Template: kibotos.WorkspaceTemplateSpec{ID: "python-3.12"},
+	},
+	kibotos.WithIdempotencyKey("job-42-workspace-create-v1"),
+)
+```
+
+## Context Cancellation & Timeouts
+
+Every method takes a `context.Context` as its first argument. Canceling the context immediately cancels in-flight HTTP requests, retry sleeps, and `Wait` loops. Per-attempt HTTP timeouts default to `30s` (`WithTimeout`), while `Wait` calls automatically extend each chunk's per-attempt timeout to `chunkSeconds + 15s`.

@@ -1,0 +1,75 @@
+---
+title: Templates & Zones
+description: Discover available Kibotos compute zones, workspace templates, and template revisions in Python.
+---
+
+Inspect available compute zones via `client.zones` and workspace templates/revisions via `client.templates` (both sync and async).
+
+## Zones
+
+### List and Iterate Zones
+
+- `client.zones.list(*, limit=None, page_token=None) -> ZonePage`
+- `client.zones.iterate(*, limit=None) -> Iterator[Zone]` (or `AsyncIterator[Zone]` on `AsyncKibotos`)
+
+```python
+from kibotos import Kibotos
+
+with Kibotos() as client:
+    page = client.zones.list(limit=50)
+    for zone in page.data:
+        print(zone.id, zone.display_name, zone.region, zone.status, zone.default)
+
+    # Or iterate across all pages
+    default_zone = next((z for z in client.zones.iterate() if z.default), None)
+    if default_zone:
+        print("Default zone:", default_zone.id)
+```
+
+### `Zone` Model Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `str` | Zone identifier (e.g. `"global-1"`). |
+| `display_name` | `str` | Human-readable zone name. |
+| `region` | `str` | Geographic region label. |
+| `status` | `ZoneStatus` (`"available" \| "draining" \| str`) | Zone operational status. |
+| `default` | `bool` | Whether this is the organization's default zone. |
+
+## Templates
+
+### List and Iterate Templates
+
+- `client.templates.list(*, owner=None, zone=None, limit=None, page_token=None) -> TemplatePage`
+- `client.templates.iterate(*, owner=None, zone=None, limit=None) -> Iterator[Template]` (or `AsyncIterator[Template]`)
+
+Filter by `owner` (`"platform"` or `"organization"`) and/or `zone`:
+
+```python
+page = client.templates.list(owner="platform", zone="global-1", limit=20)
+for tpl in page.data:
+    print(tpl.id, tpl.display_name, tpl.default_revision, tpl.zones)
+
+# Async iteration
+async for tpl in async_client.templates.iterate(owner="organization"):
+    print(tpl.id, tpl.latest_revision)
+```
+
+### Get a Template
+
+```python
+tpl = client.templates.get("python-3.12")
+print(tpl.display_name, "default revision:", tpl.default_revision)
+```
+
+### List and Get Template Revisions
+
+```python
+revisions = client.templates.list_revisions("python-3.12", limit=10)
+for rev in revisions.data:
+    print(rev.id, rev.status, rev.size_mib, rev.ready_at)
+
+rev = client.templates.get_revision("python-3.12", "rev_20260101")
+if rev.failure:
+    print("Revision failure:", rev.failure.code, rev.failure.message)
+```

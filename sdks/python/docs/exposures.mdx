@@ -1,0 +1,75 @@
+---
+title: Exposures
+description: Create, list, inspect, and revoke temporary public HTTPS port exposures for Kibotos workspaces in Python.
+---
+
+Expose HTTP/HTTPS services inside a running workspace on temporary public HTTPS URLs (`*.kibo.run`) through `client.exposures` (`ExposuresResource` on `Kibotos`, `AsyncExposuresResource` on `AsyncKibotos`).
+
+## Create an Exposure
+
+`client.exposures.create(workspace_id, *, port, ttl_seconds=None, idempotency_key=None) -> Exposure`
+
+Creates an active HTTPS exposure (`POST /v1/workspaces/{id}/exposures`, HTTP `201 Created`):
+
+```python
+from kibotos import Kibotos
+
+with Kibotos() as client:
+    exp = client.exposures.create(
+        "wks_01j9...",
+        port=8080,
+        ttl_seconds=3600,
+    )
+    print("ID:", exp.id)
+    print("URL:", exp.url)
+    print("Expires at:", exp.expires_at.isoformat())
+```
+
+### `Exposure` Model Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `str` | Unique exposure identifier (`exp_...`). |
+| `workspace_id` | `str` | Owning workspace ID. |
+| `port` | `int` | Exposed workspace TCP port. |
+| `url` | `str` | Public HTTPS URL routing to the workspace port. |
+| `status` | `ExposureStatus` (`"active" \| "revoked" \| "expired" \| str`) | Current exposure state. |
+| `expires_at` | `datetime` | Expiration timestamp. |
+| `revoked_at` | `datetime \| None` | Revocation timestamp, or `None` if not revoked. |
+| `created_at` | `datetime` | Creation timestamp. |
+
+## List and Iterate Exposures
+
+### Single Page (`list`)
+
+Returns an `ExposurePage` (`data: list[Exposure]`, `next_page_token: str | None`):
+
+```python
+page = client.exposures.list("wks_01j9...", include_revoked=True, limit=20)
+for exp in page.data:
+    print(exp.id, exp.port, exp.status, exp.url)
+```
+
+### Auto-Pagination (`iterate`)
+
+```python
+# Sync
+for exp in client.exposures.iterate("wks_01j9..."):
+    print(exp.port, exp.url)
+
+# Async
+async for exp in async_client.exposures.iterate("wks_01j9...", include_revoked=False):
+    print(exp.id, exp.url)
+```
+
+## Get and Revoke an Exposure
+
+```python
+# Inspect a specific exposure
+exp = client.exposures.get("wks_01j9...", "exp_01j9...")
+print(exp.status, exp.expires_at)
+
+# Revoke immediately (DELETE /v1/workspaces/{id}/exposures/{exposure_id})
+revoked = client.exposures.revoke("wks_01j9...", "exp_01j9...")
+print(revoked.status, revoked.revoked_at)  # "revoked"
+```

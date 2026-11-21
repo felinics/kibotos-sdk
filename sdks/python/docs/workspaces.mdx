@@ -1,0 +1,172 @@
+---
+title: Workspaces
+description: Create, list, update with UNSET/None PATCH semantics, start, stop, configure timeouts and networking, attach volumes, and wait for Kibotos workspaces in Python.
+---
+
+Manage microVM workspaces via `client.workspaces` (`WorkspacesResource` on `Kibotos`, `AsyncWorkspacesResource` on `AsyncKibotos`).
+
+## Create a Workspace
+
+`create()` sends `POST /v1/workspaces` (HTTP `202 Accepted`) and returns a `Workspace` model. Only `template` is required, and it accepts either a template ID string, a `WorkspaceTemplateRef`, or a mapping.
+
+```python
+from kibotos import (
+    Kibotos,
+    WorkspaceNetwork,
+    WorkspaceResources,
+    WorkspaceTemplateRef,
+    WorkspaceTimeoutSpec,
+    WorkspaceVolume,
+)
+
+with Kibotos() as client:
+    ws = client.workspaces.create(
+        template=WorkspaceTemplateRef(id="python-3.12", revision="rev_20260101"),
+        name="ml-sandbox",
+        zone="global-1",
+        resources=WorkspaceResources(vcpus=4, memory_mib=8192, disk_mib=20480),
+        network=WorkspaceNetwork(mode="public_internet"),
+        volume=WorkspaceVolume(
+            id="vol_01j9...",
+            mount_path="/data",
+            delete_with_workspace=False,
+        ),
+        timeout=WorkspaceTimeoutSpec(seconds=3600, action="stop"),
+        labels={"team": "ml", "env": "staging"},
+        idempotency_key="ml-sandbox-create-1",
+    )
+```
+
+Plain dicts are also accepted for `template`, `resources`, `network`, `volume`, and `timeout`, and `template="python-3.12"` is shorthand for `{"id": "python-3.12"}`.
+
+## Wait for a Target Status
+
+`client.workspaces.wait(workspace_id, *, status, timeout=30.0) -> Workspace`
+
+Long-polls `GET /v1/workspaces/{id}/wait` until the workspace reaches one of the target statuses. Timeouts longer than `60` seconds automatically loop across `<= 60s` server wait windows.
+
+```python
+# Synchronous
+ws = client.workspaces.wait(created.id, status=["running", "failed"], timeout=180.0)
+
+# Asynchronous
+ws = await async_client.workspaces.wait(created.id, status="running", timeout=180.0)
+```
+
+- `status`: A single status string or a sequence of strings (`"creating"`, `"running"`, `"stopping"`, `"stopped"`, `"starting"`, `"deleting"`, `"failed"`, `"unknown"`).
+- `timeout`: Total wait budget in seconds (`float`, default `30.0`). Raises `ValueError` if non-positive.
+- Raises `WaitTimeoutError` (`408`) if the budget expires, or `UnexpectedStatusError` (`409`) if the workspace enters an unexpected terminal state.
+
+## List and Iterate Workspaces
+
+### Single Page (`list`)
+
+Returns a `WorkspacePage` (`data: list[Workspace]`, `unavailable_zones: list[str]`, `next_page_token: str | None`):
+
+```python
+page = client.workspaces.list(
+    status="running",
+    zone="global-1",
+    labels={"team": "ml"},
+    limit=20,
+)
+for ws in page.data:
+    print(ws.id, ws.name, ws.status)
+```
+
+### Auto-Pagination (`iterate`)
+
+Yields every matching `Workspace` across all pages:
+
+```python
+# Sync
+for ws in client.workspaces.iterate(status="running", labels={"team": "ml"}, limit=50):
+    print(ws.id, ws.name)
+
+# Async
+async for ws in async_client.workspaces.iterate(status="running"):
+    print(ws.id, ws.name)
+```
+
+## Get, Update (`UNSET` PATCH Semantics), and Delete
+
+`update()` uses an internal `UNSET` sentinel default for `name` so the SDK can distinguish between **omitting** `name` (leave unchanged) and passing **`name=None`** (explicitly clear the name to JSON `null`):
+
+```python
+# Fetch by ID
+ws = client.workspaces.get("wks_01j9...")
+
+# Update labels ONLY (name is omitted / UNSET, so it is NOT sent in the PATCH body)
+ws = client.workspaces.update(
+    ws.id,
+    labels={
+        "owner": "platform",
+        "old_tag": None,  # Passing None removes that label key
+    },
+)
+
+# Rename the workspace
+ws = client.workspaces.update(ws.id, name="renamed-sandbox")
+
+# Explicitly clear the workspace name (sends {"name": null})
+ws = client.workspaces.update(ws.id, name=None)
+
+# Delete asynchronously (HTTP 202)
+deleting = client.workspaces.delete(ws.id)
+print(deleting.status)  # "deleting"
+```
+
+## Start and Stop
+
+```python
+# Graceful stop
+client.workspaces.stop(ws.id)
+client.workspaces.wait(ws.id, status="stopped", timeout=60)
+
+# Force immediate power-off
+client.workspaces.stop(ws.id, force=True, idempotency_key="force-stop-1")
+
+# Start a stopped workspace with an optional timeout policy
+client.workspaces.start(
+    ws.id,
+    timeout=WorkspaceTimeoutSpec(seconds=7200, action="stop"),
+)
+client.workspaces.wait(ws.id, status="running", timeout=120)
+```
+
+## Update Timeout Policy
+
+```python
+ws = client.workspaces.set_timeout(
+    ws.id,
+    seconds=7200,
+    action="stop",  # "stop" or "delete"
+)
+print(ws.timeout.expires_at if ws.timeout else None)
+```
+
+## Configure Outbound Network
+
+Switch outbound network mode between `"public_internet"` and `"deny_all"`:
+
+```python
+ws = client.workspaces.set_network(ws.id, mode="deny_all")
+print(ws.network.mode, ws.network.applied)
+```
+
+## Attach and Detach Volumes
+
+Volumes must belong to the same zone as the workspace and are attached/detached while the workspace is `"stopped"`:
+
+```python
+# Attach a persistent volume
+ws = client.workspaces.attach_volume(
+    ws.id,
+    volume_id="vol_01j9...",
+    mount_path="/data",
+    delete_with_workspace=False,
+)
+
+# Detach the attached volume
+ws = client.workspaces.detach_volume(ws.id)
+```

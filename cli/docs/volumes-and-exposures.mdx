@@ -1,0 +1,133 @@
+---
+title: Volumes, Exposures, Zones & Templates
+description: Manage persistent volumes, temporary HTTPS port exposures, compute zones, and workspace templates with the kibo CLI.
+---
+
+Reference for `kibo volume`, `kibo exposure`, `kibo zone`, and `kibo template`.
+
+## Persistent Volumes (`kibo volume`)
+
+Aliases: `vol`, `volumes`.
+
+### Create a Volume
+
+`--size` (in GiB) is required. Pass `--wait` to wait until status reaches `available` (`--wait-timeout` defaults to `300`):
+
+```bash
+kibo vol create \
+  --size 50 \
+  --name datasets-cache \
+  --zone global-1 \
+  --label team=ml \
+  --wait --json
+```
+
+### List and Inspect Volumes
+
+```bash
+# List unattached volumes in a zone
+kibo vol list --zone global-1 --attached false --label team=ml
+
+# Single page with explicit pagination
+kibo vol list --limit 25 --page-token <token> --json
+
+# Get full volume details
+kibo vol get vol_01j9...
+```
+
+### Update a Volume
+
+```bash
+kibo vol update vol_01j9... \
+  --name datasets-v2 \
+  --label tier=hot \
+  --unset-label legacy
+
+# Clear the volume name
+kibo vol update vol_01j9... --clear-name
+```
+
+### Resize a Volume
+
+Grows a volume to a larger size in GiB. With `--wait`, blocks until status returns to `available` or `attached`:
+
+```bash
+kibo vol resize vol_01j9... --size 100 --wait
+```
+
+### Delete and Wait on a Volume
+
+```bash
+# Wait explicitly for target status(es) (default --timeout: 30)
+kibo vol wait vol_01j9... --status available,failed --timeout 120
+
+# Delete an unattached volume and wait until removed
+kibo vol delete vol_01j9... --wait
+```
+
+## HTTPS Port Exposures (`kibo exposure`)
+
+Aliases: `exp`, `exposures`.
+
+Expose any TCP port (`1`–`65535`) inside a running workspace on a temporary public HTTPS URL (`*.kibo.run`).
+
+### Create an Exposure
+
+`--port` is required; `--ttl` is optional (API default: `3600` seconds):
+
+```bash
+kibo exp create wks_01j9... --port 8080 --ttl 3600 --json
+```
+
+### List, Get, and Revoke Exposures
+
+```bash
+# List active exposures for a workspace
+kibo exp list wks_01j9...
+
+# Include revoked exposures
+kibo exp list wks_01j9... --include-revoked --limit 20
+
+# Inspect a specific exposure
+kibo exp get wks_01j9... exp_01j9...
+
+# Revoke an active exposure immediately
+kibo exp revoke wks_01j9... exp_01j9...
+```
+
+## Compute Zones (`kibo zone`)
+
+Aliases: `zones`.
+
+List compute zones accessible to your organization (`--limit` and `--page-token` optional; auto-paginates when omitted):
+
+```bash
+kibo zone list
+kibo zone list --json
+```
+
+## Workspace Templates (`kibo template`)
+
+Aliases: `tpl`, `templates`.
+
+### List and Inspect Templates
+
+Filter by `--owner` (`platform` or `organization`) and/or `--zone`:
+
+```bash
+# List platform templates available in global-1
+kibo tpl list --owner platform --zone global-1
+
+# Inspect a template's default/latest revision and supported zones
+kibo tpl get python-3.12 --json
+```
+
+### Inspect Template Revisions
+
+```bash
+# List revisions for a template
+kibo tpl revisions python-3.12
+
+# Inspect a specific revision (build status, size_mib, zones, ready_at)
+kibo tpl revision python-3.12 rev_20260101 --json
+```

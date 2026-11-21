@@ -1,0 +1,127 @@
+---
+title: Volumes
+description: Create, list, update, resize, delete, and wait for persistent Kibotos volumes with @kibotos/sdk.
+---
+
+Manage durable persistent storage volumes through `client.volumes` (`VolumesResource`). Volumes can be attached to workspaces in the same zone at creation time or while stopped.
+
+## Create a Volume
+
+`client.volumes.create(body: CreateVolumeRequest, opts?: RequestOptions): Promise<Volume>`
+
+Creates a persistent volume asynchronously (`POST /v1/volumes`, HTTP `202 Accepted`). `size_gib` is required.
+
+```ts
+import { Kibotos } from '@kibotos/sdk';
+
+const client = new Kibotos();
+
+const created = await client.volumes.create({
+  name: 'datasets-cache',
+  zone: 'global-1',
+  size_gib: 50,
+  labels: { team: 'ml' },
+});
+
+const volume = await client.volumes.wait(created.id, {
+  status: ['available', 'failed'],
+  timeoutSeconds: 120,
+});
+console.log(volume.id, volume.status, `${volume.size_gib} GiB`);
+```
+
+### `CreateVolumeRequest` Fields
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `size_gib` | `number` | Yes | Volume capacity in GiB. |
+| `name` | `string` | No | Human-readable volume name. |
+| `zone` | `string` | No | Target compute zone ID (defaults to organization default zone). |
+| `labels` | `Record<string, string>` | No | Key-value metadata labels. |
+
+## List and Iterate Volumes
+
+### Single Page (`list`)
+
+`client.volumes.list(params?: ListVolumesParams, opts?: RequestOptions): Promise<MultiZonePage<Volume>>`
+
+```ts
+const page = await client.volumes.list({
+  zone: 'global-1',
+  attached: false,
+  labels: { team: 'ml' },
+  limit: 25,
+});
+
+for (const vol of page.data) {
+  console.log(vol.id, vol.size_gib, vol.status, vol.workspace_id);
+}
+```
+
+### Auto-Pagination (`iterate`)
+
+`client.volumes.iterate(params?: ListVolumesParams, opts?: RequestOptions): AsyncIterable<Volume>`
+
+```ts
+for await (const vol of client.volumes.iterate({ attached: true })) {
+  console.log(`${vol.id} attached to ${vol.workspace_id}`);
+}
+```
+
+## Get and Update a Volume
+
+```ts
+// Fetch by ID
+const vol = await client.volumes.get('vol_01j9...');
+
+// Update name and labels (pass null to clear name or delete a label key)
+const updated = await client.volumes.update(vol.id, {
+  name: 'datasets-v2',
+  labels: {
+    tier: 'hot',
+    old_label: null,
+  },
+});
+```
+
+## Resize a Volume
+
+`client.volumes.resize(id: string, body: ResizeVolumeRequest, opts?: RequestOptions): Promise<Volume>`
+
+Grows an existing volume asynchronously (`POST /v1/volumes/{id}/resize`, HTTP `202 Accepted`). Wait for `'available'` (unattached) or `'attached'` (attached) to confirm completion:
+
+```ts
+await client.volumes.resize(vol.id, { size_gib: 100 });
+
+const resized = await client.volumes.wait(vol.id, {
+  status: ['available', 'attached', 'failed'],
+  timeoutSeconds: 180,
+});
+console.log('New size:', resized.size_gib, 'GiB');
+```
+
+## Delete a Volume
+
+`client.volumes.delete(id: string, opts?: RequestOptions): Promise<Volume>`
+
+Deletes an unattached volume asynchronously (`DELETE /v1/volumes/{id}`, HTTP `202 Accepted`). Attempting to delete an attached volume throws `ConflictError` (`volume_attached`).
+
+```ts
+const deleting = await client.volumes.delete(vol.id);
+console.log(deleting.status); // 'deleting'
+```
+
+## Wait for Volume Status
+
+`client.volumes.wait(id: string, params: WaitVolumeParams, opts?: RequestOptions): Promise<Volume>`
+
+Supported `VolumeStatus` values: `'creating'`, `'available'`, `'attached'`, `'resizing'`, `'deleting'`, `'failed'`, `'unknown'`.
+
+```ts
+const ready = await client.volumes.wait('vol_01j9...', {
+  status: ['available', 'failed'],
+  timeoutSeconds: 90,
+});
+```
+
+As with workspaces, `timeoutSeconds` defaults to `30` and automatically loops across `<= 60s` server long-poll windows when larger than `60`.

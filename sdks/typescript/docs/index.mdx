@@ -1,0 +1,128 @@
+---
+title: TypeScript SDK
+description: Install, configure, and get started with @kibotos/sdk — the official zero-dependency TypeScript and JavaScript SDK for Kibotos.
+---
+
+`@kibotos/sdk` is the official zero-dependency TypeScript and JavaScript SDK for the **Kibotos** v1 API. Built strictly on standard Web APIs (`fetch`, `URL`, `URLSearchParams`, `AbortController`, `AbortSignal.timeout`, and `crypto.randomUUID`), it runs across server and edge runtimes without polyfills.
+
+## Requirements & Runtime Compatibility
+
+- **Node.js**: 20.0.0 or later
+- **Bun**: Supported natively
+- **Deno**: Supported natively
+- **Cloudflare Workers & Edge Runtimes**: Supported natively (safe `process.env` probing; pass `apiKey` explicitly from worker bindings)
+- **Module formats**: Dual ESM (`import`) and CommonJS (`require`) with bundled `.d.ts` / `.d.cts` type definitions
+
+## Installation
+
+```bash
+npm install @kibotos/sdk
+```
+
+Or with your preferred package manager:
+
+```bash
+pnpm add @kibotos/sdk
+# or
+bun add @kibotos/sdk
+```
+
+## Quickstart
+
+Set `KIBOTOS_API_KEY` in your environment (or pass `apiKey` to `new Kibotos(...)`):
+
+```bash
+export KIBOTOS_API_KEY="kb_..."
+```
+
+Then create a workspace, wait until it is running, expose a port over HTTPS, and clean up:
+
+```ts
+import { Kibotos } from '@kibotos/sdk';
+
+const client = new Kibotos();
+
+// 1. Create a workspace (asynchronous; returns initial Workspace)
+const created = await client.workspaces.create({
+  name: 'agent-runner',
+  template: { id: 'python-3.12' },
+  resources: { vcpus: 2, memory_mib: 4096 },
+  timeout: { seconds: 3600, action: 'stop' },
+  labels: { env: 'dev' },
+});
+
+// 2. Wait until the workspace reaches running (auto-chunks timeouts > 60s)
+const workspace = await client.workspaces.wait(created.id, {
+  status: ['running', 'failed'],
+  timeoutSeconds: 120,
+});
+console.log('Workspace ready:', workspace.id, workspace.status);
+
+// 3. Expose port 8080 on a temporary HTTPS URL
+const exposure = await client.exposures.create(workspace.id, {
+  port: 8080,
+  ttl_seconds: 3600,
+});
+console.log('Public URL:', exposure.url);
+
+// 4. Clean up
+await client.exposures.revoke(workspace.id, exposure.id);
+await client.workspaces.delete(workspace.id);
+```
+
+## Client Configuration
+
+Pass a `KibotosClientOptions` object to `new Kibotos(options)`:
+
+```ts
+import { Kibotos } from '@kibotos/sdk';
+
+const client = new Kibotos({
+  apiKey: 'kb_...',
+  baseUrl: 'https://api.kibo.to/v1',
+  maxRetries: 3,
+  timeoutMs: 30_000,
+  defaultHeaders: { 'X-App': 'my-service' },
+  fetch: globalThis.fetch,
+});
+```
+
+### `KibotosClientOptions`
+
+| Option | Type | Env Fallback | Default | Description |
+| --- | --- | --- | --- | --- |
+| `apiKey` | `string` | `KIBOTOS_API_KEY` | `undefined` | Organization API key (`kb_...`). Sent as `Authorization: Bearer <apiKey>`. |
+| `baseUrl` | `string` | `KIBOTOS_API_URL` | `'https://api.kibo.to/v1'` | API base URL. Trailing slashes are trimmed and `/v1` is normalized automatically. |
+| `maxRetries` | `number` | — | `3` | Maximum retry attempts for retryable API errors, HTTP `429`/`5xx`, and network errors. Set `0` to disable retries. |
+| `timeoutMs` | `number` | — | `30000` | Default per-request HTTP timeout in milliseconds. |
+| `fetch` | `typeof globalThis.fetch` | — | `globalThis.fetch` | Custom `fetch` implementation for testing or custom runtimes. |
+| `defaultHeaders` | `Record<string, string>` | — | `{}` | Additional headers merged into every request. |
+
+You can inspect the normalized base URL via the read-only `client.baseUrl` getter (always ending in `/v1`).
+
+> **Cloudflare Workers and browser-like runtimes**: Because `process.env` is unavailable in Workers, read the secret from your worker `env` binding and pass `new Kibotos({ apiKey: env.KIBOTOS_API_KEY })`.
+
+## Resource Namespaces
+
+| Namespace | Guide | Methods |
+| --- | --- | --- |
+| `client.workspaces` | [Workspaces](./workspaces) | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `setTimeout`, `setNetwork`, `attachVolume`, `detachVolume`, `wait` |
+| `client.volumes` | [Volumes](./volumes) | `create`, `list`, `iterate`, `get`, `update`, `resize`, `delete`, `wait` |
+| `client.exposures` | [Exposures](./exposures) | `create`, `list`, `iterate`, `get`, `revoke` |
+| `client.templates` | [Templates & Zones](./templates-and-zones) | `list`, `iterate`, `get`, `listRevisions`, `getRevision` |
+| `client.zones` | [Templates & Zones](./templates-and-zones) | `list`, `iterate` |
+
+## Per-Request Options
+
+Every resource method accepts an optional trailing `opts?: RequestOptions` argument:
+
+```ts
+interface RequestOptions {
+  idempotencyKey?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  headers?: Record<string, string>;
+}
+```
+
+See [Errors & Retries](./errors-and-retries) for details on automatic retries, `Idempotency-Key` handling, and request cancellation with `AbortSignal`.

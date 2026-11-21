@@ -1,0 +1,108 @@
+---
+title: Templates & Zones
+description: Discover available Kibotos compute zones, workspace templates, and immutable template revisions with @kibotos/sdk.
+---
+
+Inspect available compute zones through `client.zones` (`ZonesResource`) and workspace templates/revisions through `client.templates` (`TemplatesResource`).
+
+## Zones
+
+### List Zones
+
+`client.zones.list(params?: ListZonesParams, opts?: RequestOptions): Promise<Page<Zone>>`
+
+Returns compute zones accessible to your organization (`GET /v1/zones`).
+
+```ts
+import { Kibotos } from '@kibotos/sdk';
+
+const client = new Kibotos();
+
+const page = await client.zones.list({ limit: 50 });
+for (const zone of page.data) {
+  console.log(zone.id, zone.display_name, zone.region, zone.status, zone.default);
+}
+```
+
+### Iterate All Zones
+
+`client.zones.iterate(params?: ListZonesParams, opts?: RequestOptions): AsyncIterable<Zone>`
+
+```ts
+for await (const zone of client.zones.iterate()) {
+  if (zone.default) {
+    console.log('Default zone:', zone.id);
+  }
+}
+```
+
+### `Zone` Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Zone identifier (e.g. `'global-1'`). |
+| `display_name` | `string` | Human-readable zone name. |
+| `region` | `string` | Geographic region label. |
+| `status` | `'available' \| 'draining'` | Operational availability of the zone. |
+| `default` | `boolean` | Whether this is your organization's default zone. |
+
+## Templates
+
+### List and Iterate Templates
+
+- `client.templates.list(params?: ListTemplatesParams, opts?: RequestOptions): Promise<MultiZonePage<Template>>`
+- `client.templates.iterate(params?: ListTemplatesParams, opts?: RequestOptions): AsyncIterable<Template>`
+
+Filter by `owner` (`'platform'` or `'organization'`) and/or `zone`:
+
+```ts
+const page = await client.templates.list({
+  owner: 'platform',
+  zone: 'global-1',
+  limit: 20,
+});
+
+for (const tpl of page.data) {
+  console.log(tpl.id, tpl.display_name, tpl.default_revision, tpl.zones);
+}
+```
+
+Or iterate across all pages:
+
+```ts
+for await (const tpl of client.templates.iterate({ owner: 'organization' })) {
+  console.log(tpl.id, tpl.latest_revision?.status);
+}
+```
+
+### Get a Template
+
+`client.templates.get(id: string, opts?: RequestOptions): Promise<Template>`
+
+```ts
+const tpl = await client.templates.get('python-3.12');
+console.log(tpl.display_name, 'default revision:', tpl.default_revision);
+```
+
+### List Template Revisions
+
+`client.templates.listRevisions(id: string, params?: ListTemplateRevisionsParams, opts?: RequestOptions): Promise<Page<TemplateRevision>>`
+
+```ts
+const revisions = await client.templates.listRevisions('python-3.12', { limit: 10 });
+for (const rev of revisions.data) {
+  console.log(rev.id, rev.status, rev.size_mib, rev.ready_at);
+}
+```
+
+### Get a Specific Revision
+
+`client.templates.getRevision(id: string, revisionId: string, opts?: RequestOptions): Promise<TemplateRevision>`
+
+```ts
+const rev = await client.templates.getRevision('python-3.12', 'rev_20260101');
+console.log(rev.id, rev.status, rev.zones);
+if (rev.failure) {
+  console.error('Build failed:', rev.failure.code, rev.failure.message);
+}
+```

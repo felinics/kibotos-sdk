@@ -1,0 +1,110 @@
+---
+title: Volumes
+description: Create, list, update, resize, delete, and wait for persistent Kibotos volumes in Python.
+---
+
+Manage durable persistent storage volumes via `client.volumes` (`VolumesResource` on `Kibotos`, `AsyncVolumesResource` on `AsyncKibotos`).
+
+## Create a Volume
+
+`client.volumes.create(*, size_gib, name=None, zone=None, labels=None, idempotency_key=None) -> Volume`
+
+Creates a persistent volume asynchronously (`POST /v1/volumes`, HTTP `202 Accepted`). `size_gib` is required.
+
+```python
+from kibotos import Kibotos
+
+with Kibotos() as client:
+    created = client.volumes.create(
+        size_gib=50,
+        name="datasets-cache",
+        zone="global-1",
+        labels={"team": "ml"},
+    )
+    vol = client.volumes.wait(created.id, status=["available", "failed"], timeout=120)
+    print(f"{vol.id}: {vol.size_gib} GiB ({vol.status})")
+```
+
+## List and Iterate Volumes
+
+### Single Page (`list`)
+
+Returns a `VolumePage` (`data: list[Volume]`, `unavailable_zones: list[str]`, `next_page_token: str | None`):
+
+```python
+page = client.volumes.list(
+    zone="global-1",
+    attached=False,
+    labels={"team": "ml"},
+    limit=25,
+)
+for vol in page.data:
+    print(vol.id, vol.name, vol.size_gib, vol.status, vol.workspace_id)
+```
+
+### Auto-Pagination (`iterate`)
+
+```python
+# Sync
+for vol in client.volumes.iterate(attached=True):
+    print(f"{vol.id} -> {vol.workspace_id}")
+
+# Async
+async for vol in async_client.volumes.iterate(zone="global-1"):
+    print(vol.id, vol.size_gib)
+```
+
+## Get and Update (`UNSET` PATCH Semantics)
+
+Just like `workspaces.update()`, `volumes.update()` omits `name` when left at its default `UNSET` sentinel, and sends `{"name": null}` when you explicitly pass `name=None`:
+
+```python
+vol = client.volumes.get("vol_01j9...")
+
+# Update name and labels (None label value deletes the key)
+vol = client.volumes.update(
+    vol.id,
+    name="datasets-v2",
+    labels={"tier": "hot", "old_label": None},
+)
+
+# Clear name only
+vol = client.volumes.update(vol.id, name=None)
+```
+
+## Resize a Volume
+
+`client.volumes.resize(volume_id, *, size_gib, idempotency_key=None) -> Volume`
+
+Grows an existing volume asynchronously (`POST /v1/volumes/{id}/resize`, HTTP `202 Accepted`):
+
+```python
+client.volumes.resize(vol.id, size_gib=100)
+vol = client.volumes.wait(
+    vol.id,
+    status=["available", "attached", "failed"],
+    timeout=180,
+)
+print("New size:", vol.size_gib, "GiB")
+```
+
+## Delete a Volume
+
+`client.volumes.delete(volume_id) -> Volume`
+
+Deletes an unattached volume asynchronously (`DELETE /v1/volumes/{id}`, HTTP `202 Accepted`). Attempting to delete an attached volume raises `ConflictError` (`volume_attached`).
+
+```python
+deleting = client.volumes.delete(vol.id)
+print(deleting.status)  # "deleting"
+```
+
+## Wait for Volume Status
+
+`client.volumes.wait(volume_id, *, status, timeout=30.0) -> Volume`
+
+Valid `VolumeStatus` values: `"creating"`, `"available"`, `"attached"`, `"resizing"`, `"deleting"`, `"failed"`, `"unknown"`. Timeouts exceeding `60` seconds automatically loop across `<= 60s` server wait windows.
+
+```python
+ready = client.volumes.wait("vol_01j9...", status=["available", "failed"], timeout=90.0)
+```

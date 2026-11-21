@@ -1,0 +1,133 @@
+---
+title: Workspaces
+description: Create, list, inspect, update, start, stop, configure timeouts and network policies, attach volumes, and wait for Kibotos workspaces with kibo workspace.
+---
+
+Manage microVM workspaces using `kibo workspace` (aliases: `ws`, `workspaces`).
+
+## Create a Workspace
+
+```bash
+kibo workspace create \
+  --template python-3.12 \
+  --name agent-sandbox \
+  --zone global-1 \
+  --vcpus 2 --memory 4096 --disk 20480 \
+  --network public_internet \
+  --timeout 3600 --timeout-action stop \
+  --label team=ml --label env=dev \
+  --wait --json
+```
+
+### `kibo workspace create` Flags
+
+| Flag | Required | Default | Description |
+| --- | --- | --- | --- |
+| `--template <id>` | Yes | — | Template ID. |
+| `--revision <rev>` | No | template default | Specific template revision ID. |
+| `--name <name>` | No | — | Human-readable workspace name. |
+| `--zone <zone>` | No | org default zone | Target zone ID. |
+| `--vcpus <n>` | No | template default | vCPU count override. |
+| `--memory <mib>` | No | template default | Memory allocation in MiB. |
+| `--disk <mib>` | No | template default | Root disk size in MiB. |
+| `--network <mode>` | No | `public_internet` | Outbound network mode: `public_internet` or `deny_all`. |
+| `--volume <vol_id>` | No | — | Existing persistent volume ID to attach at creation. |
+| `--mount-path <path>` | No | — | Mount path inside the workspace (e.g. `/data`; requires `--volume`). |
+| `--delete-volume` | No | `false` | Delete the attached volume when this workspace is deleted (requires `--volume`). |
+| `--timeout <sec>` | No | — | Auto-timeout duration in seconds. |
+| `--timeout-action <action>` | No | — | Action on timeout expiration: `stop` or `delete` (requires `--timeout`). |
+| `--label <key=value>` | No | — | Workspace label (repeatable). |
+| `--wait` | No | `false` | Block until workspace status reaches `running`. |
+| `--wait-timeout <sec>` | No | `300` | Maximum seconds to wait when `--wait` is set. |
+
+## List and Inspect Workspaces
+
+When neither `--limit` nor `--page-token` is provided, `kibo workspace list` automatically collects all pages across zones:
+
+```bash
+# List all running workspaces matching labels
+kibo ws list --status running --zone global-1 --label team=ml
+
+# Fetch a single page in JSON
+kibo ws list --limit 20 --page-token <token> --json
+
+# Inspect a specific workspace
+kibo ws get wks_01j9...
+```
+
+Valid `--status` values: `creating`, `running`, `stopping`, `stopped`, `starting`, `deleting`, `failed`, `unknown`.
+
+## Update Name and Labels
+
+Specify at least one of `--name`, `--clear-name`, `--label`, or `--unset-label`. `--name` and `--clear-name` are mutually exclusive; `--label` and `--unset-label` are repeatable:
+
+```bash
+# Rename and update/remove labels
+kibo ws update wks_01j9... \
+  --name production-worker \
+  --label env=prod \
+  --unset-label temp
+
+# Clear the workspace name (sets name to null)
+kibo ws update wks_01j9... --clear-name
+```
+
+## Start, Stop, and Delete
+
+All lifecycle mutations accept `--wait` and `--wait-timeout <sec>` (default `300`):
+
+```bash
+# Gracefully stop and wait until stopped
+kibo ws stop wks_01j9... --wait
+
+# Force immediate power-off
+kibo ws stop wks_01j9... --force --wait
+
+# Start a stopped workspace with a fresh 2-hour auto-stop timeout
+kibo ws start wks_01j9... --timeout 7200 --timeout-action stop --wait
+
+# Delete and wait until removed (returns status "deleted" when complete)
+kibo ws delete wks_01j9... --wait
+```
+
+## Update Timeout Policy
+
+Extend or change the auto-timeout on a workspace (`--seconds` is required):
+
+```bash
+kibo ws timeout wks_01j9... --seconds 7200 --action stop
+```
+
+## Configure Outbound Network
+
+Switch between `public_internet` and `deny_all`. Pass `--wait` to block until `network.applied` becomes `true`:
+
+```bash
+kibo ws network wks_01j9... --mode deny_all --wait
+kibo ws network wks_01j9... --mode public_internet --wait
+```
+
+## Attach and Detach Persistent Volumes
+
+Volumes must be in the same zone as the workspace and attached or detached while the workspace is stopped:
+
+```bash
+# Stop the workspace, attach a volume, and start it again
+kibo ws stop wks_01j9... --wait
+kibo ws volume attach wks_01j9... \
+  --volume vol_01j9... \
+  --mount-path /data \
+  --delete-with-workspace=false
+kibo ws start wks_01j9... --wait
+
+# Detach a volume (while workspace is stopped)
+kibo ws volume detach wks_01j9...
+```
+
+## Explicit Wait (`kibo workspace wait`)
+
+Block until a workspace reaches any of the given statuses (`--status` accepts comma-separated values or repeated flags; `--timeout` defaults to `30` seconds and auto-chunks waits longer than `60` seconds):
+
+```bash
+kibo ws wait wks_01j9... --status running,failed --timeout 180 --json
+```

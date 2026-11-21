@@ -1,0 +1,96 @@
+---
+title: Exposures
+description: Create, list, inspect, and revoke temporary public HTTPS port exposures for Kibotos workspaces with @kibotos/sdk.
+---
+
+Expose HTTP/HTTPS services running inside a workspace on temporary public HTTPS URLs (`*.kibo.run`) through `client.exposures` (`ExposuresResource`).
+
+## Create an Exposure
+
+`client.exposures.create(workspaceId: string, body: CreateExposureRequest, opts?: RequestOptions): Promise<Exposure>`
+
+Creates an active exposure (`POST /v1/workspaces/{id}/exposures`, HTTP `201 Created`).
+
+```ts
+import { Kibotos } from '@kibotos/sdk';
+
+const client = new Kibotos();
+
+const exposure = await client.exposures.create('wks_01j9...', {
+  port: 8080,
+  ttl_seconds: 3600,
+});
+
+console.log('Exposure ID:', exposure.id);
+console.log('Public URL:', exposure.url);
+console.log('Expires at:', exposure.expires_at);
+```
+
+### `CreateExposureRequest` Fields
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `port` | `number` | Yes | TCP port inside the workspace (`1`–`65535`). |
+| `ttl_seconds` | `number` | No | Lifetime in seconds (API default: `3600`). |
+
+### `Exposure` Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Unique exposure identifier (`exp_...`). |
+| `workspace_id` | `string` | Owning workspace ID. |
+| `port` | `number` | Exposed workspace port. |
+| `url` | `string` | Public HTTPS URL routing traffic to the workspace port. |
+| `status` | `'active' \| 'revoked' \| 'expired'` | Current exposure status. |
+| `expires_at` | `string` | RFC 3339 expiration timestamp. |
+| `revoked_at` | `string \| null` | RFC 3339 revocation timestamp, or `null` if not revoked. |
+| `created_at` | `string` | RFC 3339 creation timestamp. |
+
+## List and Iterate Exposures
+
+### Single Page (`list`)
+
+`client.exposures.list(workspaceId: string, params?: ListExposuresParams, opts?: RequestOptions): Promise<Page<Exposure>>`
+
+By default only active exposures are returned. Pass `include_revoked: true` to include revoked entries.
+
+```ts
+const page = await client.exposures.list('wks_01j9...', {
+  include_revoked: true,
+  limit: 20,
+});
+
+for (const exp of page.data) {
+  console.log(exp.id, exp.port, exp.status, exp.url);
+}
+```
+
+### Auto-Pagination (`iterate`)
+
+`client.exposures.iterate(workspaceId: string, params?: ListExposuresParams, opts?: RequestOptions): AsyncIterable<Exposure>`
+
+```ts
+for await (const exp of client.exposures.iterate('wks_01j9...')) {
+  console.log(`${exp.port} -> ${exp.url} (${exp.status})`);
+}
+```
+
+## Get an Exposure
+
+`client.exposures.get(workspaceId: string, exposureId: string, opts?: RequestOptions): Promise<Exposure>`
+
+```ts
+const exp = await client.exposures.get('wks_01j9...', 'exp_01j9...');
+console.log(exp.status, exp.expires_at);
+```
+
+## Revoke an Exposure
+
+`client.exposures.revoke(workspaceId: string, exposureId: string, opts?: RequestOptions): Promise<Exposure>`
+
+Immediately revokes an active exposure (`DELETE /v1/workspaces/{id}/exposures/{exposure_id}`):
+
+```ts
+const revoked = await client.exposures.revoke('wks_01j9...', 'exp_01j9...');
+console.log(revoked.status, revoked.revoked_at); // 'revoked'
+```

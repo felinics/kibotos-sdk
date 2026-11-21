@@ -1,0 +1,77 @@
+---
+title: Exposures
+description: Create, list, iterate, inspect, and revoke temporary public HTTPS port exposures for Kibotos workspaces in Go.
+---
+
+Expose HTTP/HTTPS services inside a running workspace on temporary public HTTPS URLs (`*.kibo.run`) via `client.Exposures` (`*kibotos.ExposuresService`).
+
+## Create an Exposure
+
+`client.Exposures.Create(ctx context.Context, workspaceID string, params CreateExposureParams, opts ...RequestOption) (*Exposure, error)`
+
+Creates an active HTTPS exposure (`POST /v1/workspaces/{id}/exposures`, HTTP `201 Created`). `Port` must be between `1` and `65535`.
+
+```go
+exp, err := client.Exposures.Create(ctx, "wks_01j9...", kibotos.CreateExposureParams{
+	Port:       8080,
+	TTLSeconds: 3600,
+})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Printf("Exposure %s -> %s (expires %s)\n", exp.ID, exp.URL, exp.ExpiresAt)
+```
+
+### `Exposure` Struct Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `ID` | `string` | Unique exposure identifier (`exp_...`). |
+| `WorkspaceID` | `string` | Owning workspace ID. |
+| `Port` | `int` | Exposed TCP port. |
+| `URL` | `string` | Temporary public HTTPS URL. |
+| `Status` | `ExposureStatus` | `ExposureStatusActive`, `ExposureStatusRevoked`, or `ExposureStatusExpired`. |
+| `ExpiresAt` | `time.Time` | Expiration timestamp. |
+| `RevokedAt` | `*time.Time` | Revocation timestamp, or `nil` if not revoked. |
+| `CreatedAt` | `time.Time` | Creation timestamp. |
+
+## List and Iterate Exposures
+
+### Single Page (`List`)
+
+Returns `*kibotos.Page[kibotos.Exposure]`:
+
+```go
+page, err := client.Exposures.List(ctx, "wks_01j9...", &kibotos.ExposureListParams{
+	IncludeRevoked: true,
+	Limit:          20,
+})
+```
+
+### Auto-Pagination (`Iter`)
+
+```go
+for exp, err := range client.Exposures.Iter(ctx, "wks_01j9...", nil) {
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s port=%d status=%s url=%s\n", exp.ID, exp.Port, exp.Status, exp.URL)
+}
+```
+
+## Get and Revoke an Exposure
+
+```go
+// Inspect a single exposure
+exp, err := client.Exposures.Get(ctx, "wks_01j9...", "exp_01j9...")
+if err != nil {
+	log.Fatal(err)
+}
+
+// Revoke immediately (DELETE /v1/workspaces/{id}/exposures/{exposure_id})
+revoked, err := client.Exposures.Revoke(ctx, "wks_01j9...", exp.ID)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(revoked.Status, revoked.RevokedAt) // revoked
+```

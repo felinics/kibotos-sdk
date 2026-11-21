@@ -1,0 +1,147 @@
+---
+title: Go SDK
+description: Install, configure, and get started with the official zero-dependency Go SDK for Kibotos.
+---
+
+`github.com/felinics/kibotos-sdk/sdks/go` (`package kibotos`) is the official zero-dependency Go SDK for the **Kibotos** v1 API. It uses only the Go standard library and supports idiomatic `context.Context` cancellation, functional options, generic `Nullable[T]` PATCH fields, and Go `iter.Seq2` pagination iterators.
+
+## Requirements
+
+- **Go**: 1.24 or later
+- **External dependencies**: None (standard library only)
+
+## Installation
+
+```bash
+go get github.com/felinics/kibotos-sdk/sdks/go
+```
+
+## Quickstart
+
+Set `KIBOTOS_API_KEY` in your environment:
+
+```bash
+export KIBOTOS_API_KEY="kb_..."
+```
+
+Then create a workspace, wait until it is running, expose a port over HTTPS, and clean up:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	kibotos "github.com/felinics/kibotos-sdk/sdks/go"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// Reads KIBOTOS_API_KEY and optional KIBOTOS_API_URL (default: https://api.kibo.to/v1)
+	client, err := kibotos.NewClientFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 1. Create a workspace
+	ws, err := client.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
+		Name:     "agent-runner",
+		Template: kibotos.WorkspaceTemplateSpec{ID: "python-3.12"},
+		Resources: &kibotos.WorkspaceResourcesSpec{
+			VCPUs:     2,
+			MemoryMiB: 4096,
+		},
+		Timeout: &kibotos.TimeoutSpec{
+			Seconds: 3600,
+			Action:  kibotos.TimeoutActionStop,
+		},
+		Labels: map[string]string{"team": "ml"},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 2. Wait until running (auto-chunks timeouts > 60s)
+	ws, err = client.Workspaces.Wait(ctx, ws.ID, kibotos.WaitWorkspaceParams{
+		Statuses: []kibotos.WorkspaceStatus{
+			kibotos.WorkspaceStatusRunning,
+			kibotos.WorkspaceStatusFailed,
+		},
+		Timeout: 3 * time.Minute,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Workspace %s is %s in zone %s\n", ws.ID, ws.Status, ws.Zone)
+
+	// 3. Expose port 8080 over HTTPS
+	exp, err := client.Exposures.Create(ctx, ws.ID, kibotos.CreateExposureParams{
+		Port:       8080,
+		TTLSeconds: 1800,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Public URL: %s\n", exp.URL)
+
+	// 4. Clean up
+	_, _ = client.Exposures.Revoke(ctx, ws.ID, exp.ID)
+	_, _ = client.Workspaces.Delete(ctx, ws.ID)
+}
+```
+
+## Client Configuration & Functional Options
+
+Initialize a client explicitly with `kibotos.NewClient(apiKey, opts...)` or from environment variables with `kibotos.NewClientFromEnv(opts...)`:
+
+```go
+client, err := kibotos.NewClient(
+	"kb_...",
+	kibotos.WithBaseURL("https://api.kibo.to/v1"),
+	kibotos.WithTimeout(30*time.Second),
+	kibotos.WithMaxRetries(3),
+	kibotos.WithRetryBackoff(500*time.Millisecond, 8*time.Second),
+	kibotos.WithUserAgent("my-service/1.0"),
+	kibotos.WithHTTPClient(&http.Client{}),
+)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println("Base URL:", client.BaseURL())
+```
+
+### `ClientOption` Functions
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `WithBaseURL(baseURL string)` | `DefaultBaseURL` (`"https://api.kibo.to/v1"`) | Overrides the API base URL. Normalized cleanly to end in `/v1`. |
+| `WithTimeout(d time.Duration)` | `DefaultTimeout` (`30s`) | Default per-attempt HTTP timeout. |
+| `WithMaxRetries(n int)` | `DefaultMaxRetries` (`3`) | Maximum retry attempts after the initial request. Clamped to `0` if negative. |
+| `WithRetryBackoff(minDelay, maxDelay time.Duration)` | `500ms` / `8s` | Bounds for exponential retry backoff with jitter. |
+| `WithUserAgent(ua string)` | `"kibotos-go/0.1.0"` | Custom `User-Agent` header value. |
+| `WithHTTPClient(hc *http.Client)` | `&http.Client{}` | Custom `*http.Client` for transport, TLS, or testing. |
+
+When using `NewClientFromEnv(opts...)`, explicit options passed to `opts` take precedence over `KIBOTOS_API_URL`.
+
+## Services
+
+| Service | Guide | Methods |
+| --- | --- | --- |
+| `client.Workspaces` | [Workspaces](./workspaces) | `Create`, `List`, `Iter`, `Get`, `Update`, `Delete`, `Start`, `Stop`, `SetTimeout`, `SetNetwork`, `AttachVolume`, `DetachVolume`, `Wait` |
+| `client.Volumes` | [Volumes](./volumes) | `Create`, `List`, `Iter`, `Get`, `Update`, `Resize`, `Delete`, `Wait` |
+| `client.Exposures` | [Exposures](./exposures) | `Create`, `List`, `Iter`, `Get`, `Revoke` |
+| `client.Templates` | [Templates & Zones](./templates-and-zones) | `List`, `Iter`, `Get`, `ListRevisions`, `GetRevision` |
+| `client.Zones` | [Templates & Zones](./templates-and-zones) | `List`, `Iter` |
+
+## Per-Request Options
+
+Every service method accepts variadic `opts ...kibotos.RequestOption`:
+
+- `kibotos.WithIdempotencyKey(key string)` — Set an explicit `Idempotency-Key` header.
+- `kibotos.WithHeader(key, value string)` — Add a custom HTTP header to a single request.
+
+See [Errors & Retries](./errors-and-retries) for `*kibotos.APIError` helpers, retry semantics, and idempotency details.

@@ -1,0 +1,123 @@
+---
+title: Volumes
+description: Create, list, iterate, update, resize, delete, and wait for persistent Kibotos volumes in Go.
+---
+
+Manage durable persistent storage volumes via `client.Volumes` (`*kibotos.VolumesService`).
+
+## Create a Volume
+
+`client.Volumes.Create(ctx context.Context, params CreateVolumeParams, opts ...RequestOption) (*Volume, error)`
+
+Provisions a volume asynchronously (`POST /v1/volumes`, HTTP `202 Accepted`). `SizeGiB` must be greater than zero.
+
+```go
+created, err := client.Volumes.Create(ctx, kibotos.CreateVolumeParams{
+	Name:    "datasets-cache",
+	Zone:    "global-1",
+	SizeGiB: 50,
+	Labels:  map[string]string{"team": "ml"},
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+vol, err := client.Volumes.Wait(ctx, created.ID, kibotos.WaitVolumeParams{
+	Statuses: []kibotos.VolumeStatus{
+		kibotos.VolumeStatusAvailable,
+		kibotos.VolumeStatusFailed,
+	},
+	Timeout: 2 * time.Minute,
+})
+```
+
+## List and Iterate Volumes (`iter.Seq2`)
+
+### Single Page (`List`)
+
+Returns `*kibotos.MultiZonePage[kibotos.Volume]`. Use `kibotos.Ptr(false)` or `kibotos.Ptr(true)` for the optional `Attached` filter:
+
+```go
+page, err := client.Volumes.List(ctx, &kibotos.VolumeListParams{
+	Zone:     "global-1",
+	Attached: kibotos.Ptr(false),
+	Labels:   map[string]string{"team": "ml"},
+	Limit:    25,
+})
+```
+
+### Auto-Pagination (`Iter`)
+
+```go
+for vol, err := range client.Volumes.Iter(ctx, &kibotos.VolumeListParams{
+	Attached: kibotos.Ptr(true),
+}) {
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s (%d GiB) status=%s\n", vol.ID, vol.SizeGiB, vol.Status)
+}
+```
+
+## Get and Update (`Nullable[T]`)
+
+```go
+vol, err := client.Volumes.Get(ctx, "vol_01j9...")
+
+vol, err = client.Volumes.Update(ctx, vol.ID, kibotos.UpdateVolumeParams{
+	Name: kibotos.Some("datasets-v2"),
+	Labels: map[string]*string{
+		"tier":      kibotos.Ptr("hot"),
+		"old_label": nil, // deletes label key
+	},
+})
+
+// Clear name explicitly
+vol, err = client.Volumes.Update(ctx, vol.ID, kibotos.UpdateVolumeParams{
+	Name: kibotos.Null[string](),
+})
+```
+
+## Resize a Volume
+
+`client.Volumes.Resize(ctx context.Context, id string, params ResizeVolumeParams, opts ...RequestOption) (*Volume, error)`
+
+Grows an existing volume asynchronously (`POST /v1/volumes/{id}/resize`, HTTP `202 Accepted`):
+
+```go
+_, err = client.Volumes.Resize(ctx, vol.ID, kibotos.ResizeVolumeParams{
+	SizeGiB: 100,
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+vol, err = client.Volumes.Wait(ctx, vol.ID, kibotos.WaitVolumeParams{
+	Statuses: []kibotos.VolumeStatus{
+		kibotos.VolumeStatusAvailable,
+		kibotos.VolumeStatusAttached,
+		kibotos.VolumeStatusFailed,
+	},
+	Timeout: 3 * time.Minute,
+})
+```
+
+## Delete a Volume
+
+`client.Volumes.Delete(ctx context.Context, id string, opts ...RequestOption) (*Volume, error)`
+
+Deletes an unattached volume asynchronously (`DELETE /v1/volumes/{id}`, HTTP `202 Accepted`):
+
+```go
+deleting, err := client.Volumes.Delete(ctx, vol.ID)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(deleting.Status) // deleting
+```
+
+## Wait for Volume Status
+
+Available `VolumeStatus` constants: `VolumeStatusCreating`, `VolumeStatusAvailable`, `VolumeStatusAttached`, `VolumeStatusResizing`, `VolumeStatusDeleting`, `VolumeStatusFailed`, `VolumeStatusUnknown`.
+
+When `params.Timeout` is zero, `Wait` uses `ctx`'s deadline if set, or defaults to `30s`. Timeouts longer than `60s` automatically chunk across `<= 60s` server wait windows.

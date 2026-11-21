@@ -1,0 +1,94 @@
+---
+title: Templates & Zones
+description: Discover available Kibotos compute zones, workspace templates, and template revisions in Go.
+---
+
+Inspect available compute zones through `client.Zones` (`*kibotos.ZonesService`) and workspace templates/revisions through `client.Templates` (`*kibotos.TemplatesService`).
+
+## Zones
+
+### List and Iterate Zones
+
+```go
+// Single page
+page, err := client.Zones.List(ctx, &kibotos.ZoneListParams{Limit: 50})
+if err != nil {
+	log.Fatal(err)
+}
+for _, z := range page.Data {
+	fmt.Printf("%s (%s, %s) status=%s default=%t\n",
+		z.ID, z.DisplayName, z.Region, z.Status, z.Default)
+}
+
+// Auto-paginate with iter.Seq2
+for z, err := range client.Zones.Iter(ctx, nil) {
+	if err != nil {
+		log.Fatal(err)
+	}
+	if z.Default {
+		fmt.Println("Default zone:", z.ID)
+	}
+}
+```
+
+`ZoneStatus` constants: `ZoneStatusAvailable` (`"available"`) and `ZoneStatusDraining` (`"draining"`).
+
+## Templates
+
+### List and Iterate Templates
+
+Filter by `Owner` (`kibotos.TemplateOwnerPlatform` or `kibotos.TemplateOwnerOrganization`) and/or `Zone`:
+
+```go
+// Single page (MultiZonePage[Template])
+page, err := client.Templates.List(ctx, &kibotos.TemplateListParams{
+	Owner: kibotos.TemplateOwnerPlatform,
+	Zone:  "global-1",
+	Limit: 20,
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+// Iterate all pages
+for tpl, err := range client.Templates.Iter(ctx, &kibotos.TemplateListParams{
+	Owner: kibotos.TemplateOwnerOrganization,
+}) {
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(tpl.ID, tpl.DisplayName, tpl.DefaultRevision)
+}
+```
+
+### Get a Template
+
+```go
+tpl, err := client.Templates.Get(ctx, "python-3.12")
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Printf("%s default=%s zones=%v\n", tpl.DisplayName, tpl.DefaultRevision, tpl.Zones)
+```
+
+### List and Get Template Revisions
+
+```go
+revs, err := client.Templates.ListRevisions(ctx, "python-3.12", &kibotos.TemplateRevisionListParams{
+	Limit: 10,
+})
+if err != nil {
+	log.Fatal(err)
+}
+for _, rev := range revs.Data {
+	fmt.Println(rev.ID, rev.Status, rev.Zones)
+}
+
+rev, err := client.Templates.GetRevision(ctx, "python-3.12", "rev_20260101")
+if err != nil {
+	log.Fatal(err)
+}
+if rev.Failure != nil {
+	fmt.Printf("Revision failed: %s: %s\n", rev.Failure.Code, rev.Failure.Message)
+}
+```

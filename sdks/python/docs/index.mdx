@@ -1,0 +1,133 @@
+---
+title: Python SDK
+description: Install, configure, and get started with kibotos — the official synchronous and asynchronous Python SDK for Kibotos.
+---
+
+`kibotos` is the official Python SDK for the **Kibotos** v1 API. It ships both synchronous (`Kibotos`) and asynchronous (`AsyncKibotos`) clients powered by `httpx` and typed Pydantic v2 models (`py.typed` included).
+
+## Requirements
+
+- **Python**: 3.10 or later
+- **Dependencies**: `httpx>=0.27`, `pydantic>=2.7`
+
+## Installation
+
+```bash
+pip install kibotos
+```
+
+Or with `uv`:
+
+```bash
+uv add kibotos
+```
+
+## Quickstart
+
+Set your API key in the environment (or pass `api_key="kb_..."` directly):
+
+```bash
+export KIBOTOS_API_KEY="kb_..."
+```
+
+### Synchronous Client (`Kibotos`)
+
+Use `Kibotos` as a context manager so the underlying `httpx.Client` connection pool closes cleanly:
+
+```python
+from kibotos import Kibotos
+
+with Kibotos() as client:
+    # 1. Create a workspace
+    created = client.workspaces.create(
+        template="python-3.12",
+        name="agent-runner",
+        resources={"vcpus": 2, "memory_mib": 4096},
+        timeout={"seconds": 3600, "action": "stop"},
+        labels={"team": "ml"},
+    )
+
+    # 2. Wait until running (auto-chunks timeouts > 60s)
+    ws = client.workspaces.wait(created.id, status=["running", "failed"], timeout=120)
+    print(f"Workspace {ws.id} is {ws.status} in zone {ws.zone}")
+
+    # 3. Expose port 8080 over HTTPS
+    exp = client.exposures.create(ws.id, port=8080, ttl_seconds=3600)
+    print("Preview URL:", exp.url)
+
+    # 4. Clean up
+    client.exposures.revoke(ws.id, exp.id)
+    client.workspaces.delete(ws.id)
+```
+
+### Asynchronous Client (`AsyncKibotos`)
+
+Every resource method and pagination iterator is available asynchronously on `AsyncKibotos`:
+
+```python
+import asyncio
+from kibotos import AsyncKibotos
+
+
+async def main() -> None:
+    async with AsyncKibotos() as client:
+        created = await client.workspaces.create(
+            template="python-3.12",
+            name="async-agent",
+        )
+        ws = await client.workspaces.wait(created.id, status=["running", "failed"], timeout=120)
+        print(ws.id, ws.status)
+
+        async for item in client.workspaces.iterate(status="running"):
+            print(item.id, item.name)
+
+        await client.workspaces.delete(ws.id)
+
+
+asyncio.run(main())
+```
+
+## Client Configuration
+
+Both `Kibotos` and `AsyncKibotos` accept identical configuration options (with `httpx.Client` / `httpx.BaseTransport` for sync and `httpx.AsyncClient` / `httpx.AsyncBaseTransport` for async):
+
+```python
+import httpx
+from kibotos import Kibotos
+
+client = Kibotos(
+    api_key="kb_...",
+    base_url="https://api.kibo.to/v1",
+    timeout=30.0,
+    max_retries=3,
+    initial_backoff=0.5,
+    max_backoff=8.0,
+)
+```
+
+| Parameter | Type | Env Fallback | Default | Description |
+| --- | --- | --- | --- | --- |
+| `api_key` | `str \| None` | `KIBOTOS_API_KEY` | *(required)* | Organization API key (`kb_...`). Raises `ValueError` if missing or blank. |
+| `base_url` | `str \| None` | `KIBOTOS_API_URL` | `"https://api.kibo.to/v1"` | API base URL. Automatically normalized to end in `/v1`. |
+| `timeout` | `float \| httpx.Timeout` | — | `30.0` | Default per-request HTTP timeout in seconds. |
+| `max_retries` | `int` | — | `3` | Maximum retry attempts for transient errors. Set `0` to disable. |
+| `http_client` | `httpx.Client \| httpx.AsyncClient \| None` | — | `None` | Bring your own `httpx` client (not closed by `close()` / `aclose()`). |
+| `transport` | `httpx.BaseTransport \| httpx.AsyncBaseTransport \| None` | — | `None` | Custom `httpx` transport (e.g. `httpx.MockTransport` in tests). |
+| `initial_backoff` | `float` | — | `0.5` | Initial exponential backoff delay in seconds. |
+| `max_backoff` | `float` | — | `8.0` | Maximum exponential backoff delay in seconds. |
+
+Inspect the normalized base URL via `client.base_url`. If you do not use a `with` / `async with` block, call `client.close()` (sync) or `await client.aclose()` (async) when finished.
+
+## Pydantic v2 Models & Forward Compatibility
+
+All response objects inherit from `KibotosModel` (`pydantic.BaseModel` configured with `extra="ignore"` and `populate_by_name=True`). Additive fields introduced in future Kibotos v1 API releases are safely ignored rather than breaking deserialization. Timestamps (`created_at`, `updated_at`, `expires_at`, `revoked_at`, `ready_at`) are parsed into Python `datetime` objects.
+
+## Resource Namespaces
+
+| Namespace | Guide | Methods |
+| --- | --- | --- |
+| `client.workspaces` | [Workspaces](./workspaces) | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `set_timeout`, `set_network`, `attach_volume`, `detach_volume`, `wait` |
+| `client.volumes` | [Volumes](./volumes) | `create`, `list`, `iterate`, `get`, `update`, `resize`, `delete`, `wait` |
+| `client.exposures` | [Exposures](./exposures) | `create`, `list`, `iterate`, `get`, `revoke` |
+| `client.templates` | [Templates & Zones](./templates-and-zones) | `list`, `iterate`, `get`, `list_revisions`, `get_revision` |
+| `client.zones` | [Templates & Zones](./templates-and-zones) | `list`, `iterate` |

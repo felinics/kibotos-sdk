@@ -1,0 +1,194 @@
+---
+title: Workspaces
+description: Create, list, iterate with iter.Seq2, update with Nullable[T], start, stop, configure timeouts and networking, attach volumes, and wait for Kibotos workspaces in Go.
+---
+
+Manage microVM workspaces via `client.Workspaces` (`*kibotos.WorkspacesService`).
+
+## Create a Workspace
+
+`client.Workspaces.Create(ctx context.Context, params CreateWorkspaceParams, opts ...RequestOption) (*Workspace, error)`
+
+Provisions a workspace asynchronously (`POST /v1/workspaces`, HTTP `202 Accepted`). Only `Template.ID` is required.
+
+```go
+ws, err := client.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
+	Name: "ml-sandbox",
+	Zone: "global-1",
+	Template: kibotos.WorkspaceTemplateSpec{
+		ID:       "python-3.12",
+		Revision: "rev_20260101",
+	},
+	Resources: &kibotos.WorkspaceResourcesSpec{
+		VCPUs:     4,
+		MemoryMiB: 8192,
+		DiskMiB:   20480,
+	},
+	Network: &kibotos.WorkspaceNetworkSpec{
+		Mode: kibotos.NetworkModePublicInternet,
+	},
+	Volume: &kibotos.WorkspaceVolumeSpec{
+		ID:                  "vol_01j9...",
+		MountPath:           "/data",
+		DeleteWithWorkspace: false,
+	},
+	Timeout: &kibotos.TimeoutSpec{
+		Seconds: 3600,
+		Action:  kibotos.TimeoutActionStop,
+	},
+	Labels: map[string]string{
+		"team": "ml",
+		"env":  "staging",
+	},
+}, kibotos.WithIdempotencyKey("ml-sandbox-create-1"))
+```
+
+## Wait for a Target Status
+
+`client.Workspaces.Wait(ctx context.Context, id string, params WaitWorkspaceParams, opts ...RequestOption) (*Workspace, error)`
+
+Blocks until the workspace reaches one of `params.Statuses`, fails with `unexpected_status`, or the timeout/context deadline expires. When `Timeout` (or `ctx` deadline) exceeds 60 seconds, `Wait` automatically loops across `<= 60s` server long-poll windows.
+
+```go
+ws, err := client.Workspaces.Wait(ctx, created.ID, kibotos.WaitWorkspaceParams{
+	Statuses: []kibotos.WorkspaceStatus{
+		kibotos.WorkspaceStatusRunning,
+		kibotos.WorkspaceStatusFailed,
+	},
+	Timeout: 3 * time.Minute,
+})
+if err != nil {
+	log.Fatal(err)
+}
+if ws.Status == kibotos.WorkspaceStatusFailed && ws.Failure != nil {
+	log.Fatalf("workspace failed: %s: %s", ws.Failure.Code, ws.Failure.Message)
+}
+```
+
+Available `WorkspaceStatus` constants: `WorkspaceStatusCreating`, `WorkspaceStatusRunning`, `WorkspaceStatusStopping`, `WorkspaceStatusStopped`, `WorkspaceStatusStarting`, `WorkspaceStatusDeleting`, `WorkspaceStatusFailed`, `WorkspaceStatusUnknown`.
+
+## List and Iterate Workspaces (`iter.Seq2`)
+
+### Single Page (`List`)
+
+Returns `*kibotos.MultiZonePage[kibotos.Workspace]`:
+
+```go
+page, err := client.Workspaces.List(ctx, &kibotos.WorkspaceListParams{
+	Status: kibotos.WorkspaceStatusRunning,
+	Zone:   "global-1",
+	Labels: map[string]string{"team": "ml"},
+	Limit:  20,
+})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Printf("Count: %d, HasMore: %t, UnavailableZones: %v\n",
+	len(page.Data), page.HasMore(), page.UnavailableZones)
+```
+
+### Auto-Pagination (`Iter`)
+
+`Iter` returns `iter.Seq2[kibotos.Workspace, error]` for idiomatic `for ... range` iteration across all pages:
+
+```go
+for ws, err := range client.Workspaces.Iter(ctx, &kibotos.WorkspaceListParams{
+	Status: kibotos.WorkspaceStatusRunning,
+	Labels: map[string]string{"team": "ml"},
+}) {
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(ws.ID, ws.Name, ws.Zone)
+}
+```
+
+## Get, Update (`Nullable[T]`), and Delete
+
+`UpdateWorkspaceParams` uses `kibotos.Nullable[string]` for `Name` so you can distinguish three states during `PATCH /v1/workspaces/{id}`:
+
+- Leave `Name` zero-valued (`Nullable[string]{}`) to **omit** `"name"` from JSON.
+- Use `kibotos.Some("new-name")` to set `"name": "new-name"`.
+- Use `kibotos.Null[string]()` to clear the name (`"name": null`).
+
+In `Labels` (`map[string]*string`), non-nil pointers set a label (`kibotos.Ptr("value")`) and `nil` deletes that label key:
+
+```go
+// Fetch a workspace
+ws, err := client.Workspaces.Get(ctx, "wks_01j9...")
+
+// Rename and update/remove labels
+ws, err = client.Workspaces.Update(ctx, ws.ID, kibotos.UpdateWorkspaceParams{
+	Name: kibotos.Some("renamed-sandbox"),
+	Labels: map[string]*string{
+		"owner":          kibotos.Ptr("platform"),
+		"deprecated_tag": nil, // deletes this label key
+	},
+})
+
+// Clear the workspace name explicitly
+ws, err = client.Workspaces.Update(ctx, ws.ID, kibotos.UpdateWorkspaceParams{
+	Name: kibotos.Null[string](),
+})
+
+// Delete asynchronously (HTTP 202)
+deleting, err := client.Workspaces.Delete(ctx, ws.ID)
+```
+
+## Start and Stop
+
+```go
+// Graceful stop
+_, err = client.Workspaces.Stop(ctx, ws.ID, nil)
+_, err = client.Workspaces.Wait(ctx, ws.ID, kibotos.WaitWorkspaceParams{
+	Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusStopped},
+	Timeout:  time.Minute,
+})
+
+// Force immediate power-off
+_, err = client.Workspaces.Stop(ctx, ws.ID, &kibotos.StopWorkspaceParams{
+	Force: true,
+})
+
+// Start with an optional timeout override
+_, err = client.Workspaces.Start(ctx, ws.ID, &kibotos.StartWorkspaceParams{
+	Timeout: &kibotos.TimeoutSpec{
+		Seconds: 7200,
+		Action:  kibotos.TimeoutActionStop,
+	},
+})
+```
+
+## Update Timeout Policy
+
+```go
+ws, err = client.Workspaces.SetTimeout(ctx, ws.ID, kibotos.SetWorkspaceTimeoutParams{
+	Seconds: 7200,
+	Action:  kibotos.TimeoutActionStop, // or kibotos.TimeoutActionDelete
+})
+```
+
+## Configure Outbound Network
+
+```go
+ws, err = client.Workspaces.SetNetwork(ctx, ws.ID, kibotos.SetWorkspaceNetworkParams{
+	Mode: kibotos.NetworkModeDenyAll, // or kibotos.NetworkModePublicInternet
+})
+fmt.Println(ws.Network.Mode, ws.Network.Applied)
+```
+
+## Attach and Detach Volumes
+
+Volumes must be in the same zone as the workspace and attached or detached while the workspace is stopped:
+
+```go
+// Attach volume
+ws, err = client.Workspaces.AttachVolume(ctx, ws.ID, kibotos.AttachVolumeParams{
+	ID:                  "vol_01j9...",
+	MountPath:           "/data",
+	DeleteWithWorkspace: false,
+})
+
+// Detach volume
+ws, err = client.Workspaces.DetachVolume(ctx, ws.ID)
+```
