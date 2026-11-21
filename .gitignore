@@ -1,0 +1,14 @@
+.DS_Store
+*.log
+node_modules/
+dist/
+coverage/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+bin/
+/cli/kibotos
