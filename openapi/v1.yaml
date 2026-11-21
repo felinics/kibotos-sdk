@@ -1,0 +1,2222 @@
+components:
+  schemas:
+    openapi.APIError:
+      properties:
+        code:
+          example: invalid_state
+          type: string
+        details:
+          additionalProperties: {}
+          type: object
+        message:
+          example: Human-readable message
+          type: string
+        request_id:
+          example: req_01jd8k3m9qv7x2n4p6r8t0w2y7
+          type: string
+        retryable:
+          example: false
+          type: boolean
+        status:
+          example: 409
+          type: integer
+      type: object
+    openapi.CreateExposureRequest:
+      properties:
+        port:
+          example: 8080
+          type: integer
+        ttl_seconds:
+          example: 3600
+          type: integer
+      type: object
+    openapi.CreateVolumeRequest:
+      properties:
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          example: datasets
+          type: string
+        size_gib:
+          example: 50
+          type: integer
+        zone:
+          example: global-1
+          type: string
+      type: object
+    openapi.CreateWorkspaceRequest:
+      properties:
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          example: agent-runner
+          type: string
+        network:
+          $ref: '#/components/schemas/openapi.WorkspaceNetworkInput'
+        resources:
+          $ref: '#/components/schemas/openapi.WorkspaceResourcesInput'
+        template:
+          $ref: '#/components/schemas/openapi.WorkspaceTemplateInput'
+        timeout:
+          $ref: '#/components/schemas/openapi.WorkspaceTimeoutInput'
+        volume:
+          $ref: '#/components/schemas/openapi.WorkspaceVolumeInput'
+        zone:
+          example: global-1
+          type: string
+      type: object
+    openapi.ErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/openapi.APIError'
+      type: object
+    openapi.Exposure:
+      properties:
+        created_at:
+          type: string
+        expires_at:
+          type: string
+        id:
+          example: exp_01jd8k3m9qv7x2n4p6r8t0w2y6
+          type: string
+        port:
+          example: 8080
+          type: integer
+        revoked_at:
+          type: string
+        status:
+          enum:
+            - active
+            - revoked
+            - expired
+          example: active
+          type: string
+        url:
+          example: https://k7x2n4p6r8t0w2y6.kibo.run
+          type: string
+        workspace_id:
+          example: wks_01jd8k3m9qv7x2n4p6r8t0w2y4
+          type: string
+      type: object
+    openapi.ExposurePage:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/openapi.Exposure'
+          type: array
+          uniqueItems: false
+        next_page_token:
+          type: string
+      type: object
+    openapi.Failure:
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retryable:
+          type: boolean
+      type: object
+    openapi.LatestTemplateRevision:
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+      type: object
+    openapi.ResizeVolumeRequest:
+      properties:
+        size_gib:
+          example: 100
+          type: integer
+      type: object
+    openapi.StartWorkspaceRequest:
+      properties:
+        timeout:
+          $ref: '#/components/schemas/openapi.WorkspaceTimeoutInput'
+      type: object
+    openapi.StopWorkspaceRequest:
+      properties:
+        force:
+          example: false
+          type: boolean
+      type: object
+    openapi.Template:
+      properties:
+        created_at:
+          type: string
+        default_revision:
+          example: r42
+          type: string
+        description:
+          type: string
+        display_name:
+          example: Python 3.12
+          type: string
+        id:
+          example: python-3.12
+          type: string
+        latest_revision:
+          $ref: '#/components/schemas/openapi.LatestTemplateRevision'
+        owner:
+          enum:
+            - platform
+            - organization
+          example: platform
+          type: string
+        updated_at:
+          type: string
+        zones:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    openapi.TemplatePage:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/openapi.Template'
+          type: array
+          uniqueItems: false
+        next_page_token:
+          type: string
+        unavailable_zones:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    openapi.TemplateProcess:
+      properties:
+        env:
+          additionalProperties:
+            type: string
+          type: object
+        shell:
+          type: string
+        user:
+          type: string
+        working_dir:
+          type: string
+      type: object
+    openapi.TemplateRevision:
+      properties:
+        created_at:
+          type: string
+        failure:
+          $ref: '#/components/schemas/openapi.Failure'
+        id:
+          example: r42
+          type: string
+        process:
+          $ref: '#/components/schemas/openapi.TemplateProcess'
+        ready_at:
+          type: string
+        size_mib:
+          type: integer
+        source:
+          additionalProperties: {}
+          type: object
+        status:
+          example: ready
+          type: string
+        template_id:
+          example: python-3.12
+          type: string
+        zones:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    openapi.TemplateRevisionPage:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/openapi.TemplateRevision'
+          type: array
+          uniqueItems: false
+        next_page_token:
+          type: string
+      type: object
+    openapi.UpdateVolumeRequest:
+      properties:
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          type: string
+      type: object
+    openapi.UpdateWorkspaceRequest:
+      properties:
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          type: string
+      type: object
+    openapi.Volume:
+      properties:
+        created_at:
+          type: string
+        failure:
+          $ref: '#/components/schemas/openapi.Failure'
+        id:
+          example: vol_01jd8k3m9qv7x2n4p6r8t0w2y5
+          type: string
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          example: datasets
+          type: string
+        size_gib:
+          example: 50
+          type: integer
+        status:
+          enum:
+            - creating
+            - available
+            - attached
+            - resizing
+            - deleting
+            - failed
+            - unknown
+          example: available
+          type: string
+        updated_at:
+          type: string
+        workspace_id:
+          type: string
+        zone:
+          example: global-1
+          type: string
+      type: object
+    openapi.VolumePage:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/openapi.Volume'
+          type: array
+          uniqueItems: false
+        next_page_token:
+          type: string
+        unavailable_zones:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    openapi.Workspace:
+      properties:
+        created_at:
+          type: string
+        failure:
+          $ref: '#/components/schemas/openapi.Failure'
+        id:
+          example: wks_01jd8k3m9qv7x2n4p6r8t0w2y4
+          type: string
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          example: agent-runner
+          type: string
+        network:
+          $ref: '#/components/schemas/openapi.WorkspaceNetwork'
+        resources:
+          $ref: '#/components/schemas/openapi.WorkspaceResources'
+        status:
+          enum:
+            - creating
+            - running
+            - stopping
+            - stopped
+            - starting
+            - deleting
+            - failed
+            - unknown
+          example: running
+          type: string
+        template:
+          $ref: '#/components/schemas/openapi.WorkspaceTemplate'
+        timeout:
+          $ref: '#/components/schemas/openapi.WorkspaceTimeout'
+        updated_at:
+          type: string
+        volume:
+          $ref: '#/components/schemas/openapi.WorkspaceVolume'
+        zone:
+          example: global-1
+          type: string
+      type: object
+    openapi.WorkspaceNetwork:
+      properties:
+        applied:
+          type: boolean
+        mode:
+          enum:
+            - public_internet
+            - deny_all
+          example: public_internet
+          type: string
+      type: object
+    openapi.WorkspaceNetworkInput:
+      properties:
+        mode:
+          enum:
+            - public_internet
+            - deny_all
+          example: public_internet
+          type: string
+      type: object
+    openapi.WorkspacePage:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/openapi.Workspace'
+          type: array
+          uniqueItems: false
+        next_page_token:
+          type: string
+        unavailable_zones:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    openapi.WorkspaceResources:
+      properties:
+        disk_mib:
+          example: 20480
+          type: integer
+        memory_mib:
+          example: 4096
+          type: integer
+        vcpus:
+          example: 2
+          type: integer
+      type: object
+    openapi.WorkspaceResourcesInput:
+      properties:
+        disk_mib:
+          example: 20480
+          type: integer
+        memory_mib:
+          example: 4096
+          type: integer
+        vcpus:
+          example: 2
+          type: integer
+      type: object
+    openapi.WorkspaceTemplate:
+      properties:
+        id:
+          example: python-3.12
+          type: string
+        revision:
+          example: r42
+          type: string
+      type: object
+    openapi.WorkspaceTemplateInput:
+      properties:
+        id:
+          example: python-3.12
+          type: string
+        revision:
+          example: r42
+          type: string
+      type: object
+    openapi.WorkspaceTimeout:
+      properties:
+        action:
+          enum:
+            - stop
+            - delete
+          example: stop
+          type: string
+        expires_at:
+          type: string
+      type: object
+    openapi.WorkspaceTimeoutInput:
+      properties:
+        action:
+          enum:
+            - stop
+            - delete
+          example: stop
+          type: string
+        seconds:
+          example: 3600
+          type: integer
+      type: object
+    openapi.WorkspaceVolume:
+      properties:
+        delete_with_workspace:
+          example: false
+          type: boolean
+        id:
+          example: vol_01jd8k3m9qv7x2n4p6r8t0w2y5
+          type: string
+        mount_path:
+          example: /data
+          type: string
+      type: object
+    openapi.WorkspaceVolumeInput:
+      properties:
+        delete_with_workspace:
+          example: false
+          type: boolean
+        id:
+          example: vol_01jd8k3m9qv7x2n4p6r8t0w2y5
+          type: string
+        mount_path:
+          example: /data
+          type: string
+      type: object
+    openapi.Zone:
+      properties:
+        default:
+          example: true
+          type: boolean
+        display_name:
+          example: Global 1
+          type: string
+        id:
+          example: global-1
+          type: string
+        region:
+          example: global
+          type: string
+        status:
+          enum:
+            - available
+            - draining
+          example: available
+          type: string
+      type: object
+    openapi.ZonePage:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/openapi.Zone'
+          type: array
+          uniqueItems: false
+        next_page_token:
+          type: string
+      type: object
+  securitySchemes:
+    BearerAuth:
+      description: 'Kibotos API key in the format: Bearer kb_<40 base62><6 base62 crc32>'
+      in: header
+      name: Authorization
+      type: apiKey
+info:
+  description: Public v1 REST API for managing Kibotos workspaces, volumes, exposures, templates, and zones.
+  title: Kibotos API
+  version: 1.0.0
+openapi: 3.1.0
+paths:
+  /v1/templates:
+    get:
+      description: List available templates across zones permitted for the API key.
+      operationId: listTemplates
+      parameters:
+        - description: Filter by owner (platform or organization)
+          in: query
+          name: owner
+          schema:
+            type: string
+        - description: Filter by zone ID
+          in: query
+          name: zone
+          schema:
+            type: string
+        - description: Maximum items per page (default 20, max 100)
+          in: query
+          name: limit
+          schema:
+            type: integer
+        - description: Opaque pagination cursor
+          in: query
+          name: page_token
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.TemplatePage'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: List templates
+      tags:
+        - Templates
+  /v1/templates/{id}:
+    get:
+      description: Retrieve a template by ID, with zones filtered to those permitted for the API key.
+      operationId: getTemplate
+      parameters:
+        - description: Template ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Template'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Get template
+      tags:
+        - Templates
+  /v1/templates/{id}/revisions:
+    get:
+      description: List revisions of a template available in zones permitted for the API key.
+      operationId: listTemplateRevisions
+      parameters:
+        - description: Template ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Maximum items per page (default 20, max 100)
+          in: query
+          name: limit
+          schema:
+            type: integer
+        - description: Opaque pagination cursor
+          in: query
+          name: page_token
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.TemplateRevisionPage'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: List template revisions
+      tags:
+        - Templates
+  /v1/templates/{id}/revisions/{revision_id}:
+    get:
+      description: Retrieve a specific revision of a template.
+      operationId: getTemplateRevision
+      parameters:
+        - description: Template ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Template revision ID
+          in: path
+          name: revision_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.TemplateRevision'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Get template revision
+      tags:
+        - Templates
+  /v1/volumes:
+    get:
+      description: List persistent volumes across zones permitted for the API key. Supports filtering by zone, attached, and label.<key>=<value>.
+      operationId: listVolumes
+      parameters:
+        - description: Filter by zone ID
+          in: query
+          name: zone
+          schema:
+            type: string
+        - description: Filter by attachment state
+          in: query
+          name: attached
+          schema:
+            type: boolean
+        - description: Maximum items per page (default 20, max 100)
+          in: query
+          name: limit
+          schema:
+            type: integer
+        - description: Opaque pagination cursor
+          in: query
+          name: page_token
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.VolumePage'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: List volumes
+      tags:
+        - Volumes
+    post:
+      description: Create a new persistent Kibotos volume asynchronously.
+      operationId: createVolume
+      parameters:
+        - description: Idempotency key (1-255 chars)
+          in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.CreateVolumeRequest'
+              description: Volume creation specification
+              summary: body
+        description: Volume creation specification
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Volume'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Create volume
+      tags:
+        - Volumes
+  /v1/volumes/{id}:
+    delete:
+      description: Delete an unattached persistent volume asynchronously. Idempotent when already deleting.
+      operationId: deleteVolume
+      parameters:
+        - description: Volume ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Volume'
+          description: Accepted
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Delete volume
+      tags:
+        - Volumes
+    get:
+      description: Retrieve a persistent Kibotos volume by ID.
+      operationId: getVolume
+      parameters:
+        - description: Volume ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Volume'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Get volume
+      tags:
+        - Volumes
+    patch:
+      description: Update a volume's display name and merge-patch labels.
+      operationId: updateVolume
+      parameters:
+        - description: Volume ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.UpdateVolumeRequest'
+              description: Fields to update
+              summary: body
+        description: Fields to update
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Volume'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Update volume
+      tags:
+        - Volumes
+  /v1/volumes/{id}/resize:
+    post:
+      description: Expand an available persistent volume asynchronously.
+      operationId: resizeVolume
+      parameters:
+        - description: Volume ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Idempotency key (1-255 chars)
+          in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.ResizeVolumeRequest'
+              description: New volume size
+              summary: body
+        description: New volume size
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Volume'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Resize volume
+      tags:
+        - Volumes
+  /v1/volumes/{id}/wait:
+    get:
+      description: Block up to 60 seconds waiting for a volume to enter one of the target statuses.
+      operationId: waitVolume
+      parameters:
+        - description: Volume ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Target volume status (repeatable)
+          in: query
+          name: status
+          required: true
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Maximum seconds to wait (default 30, max 60)
+          in: query
+          name: timeout
+          schema:
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Volume'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "408":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Request Timeout
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Wait for volume status
+      tags:
+        - Volumes
+  /v1/workspaces:
+    get:
+      description: List workspaces across zones permitted for the API key. Supports filtering by status, zone, and label.<key>=<value>.
+      operationId: listWorkspaces
+      parameters:
+        - description: Filter by workspace status
+          in: query
+          name: status
+          schema:
+            type: string
+        - description: Filter by zone ID
+          in: query
+          name: zone
+          schema:
+            type: string
+        - description: Maximum items per page (default 20, max 100)
+          in: query
+          name: limit
+          schema:
+            type: integer
+        - description: Opaque pagination cursor
+          in: query
+          name: page_token
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.WorkspacePage'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: List workspaces
+      tags:
+        - Workspaces
+    post:
+      description: Create a new Kibotos workspace asynchronously. Returns 202 with initial workspace state.
+      operationId: createWorkspace
+      parameters:
+        - description: Idempotency key (1-255 chars)
+          in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.CreateWorkspaceRequest'
+              description: Workspace creation specification
+              summary: body
+        description: Workspace creation specification
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Create workspace
+      tags:
+        - Workspaces
+  /v1/workspaces/{id}:
+    delete:
+      description: Delete a Kibotos workspace asynchronously. Idempotent when already deleting.
+      operationId: deleteWorkspace
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: Accepted
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Delete workspace
+      tags:
+        - Workspaces
+    get:
+      description: Retrieve a Kibotos workspace by ID.
+      operationId: getWorkspace
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Get workspace
+      tags:
+        - Workspaces
+    patch:
+      description: Update a workspace's display name and merge-patch labels.
+      operationId: updateWorkspace
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.UpdateWorkspaceRequest'
+              description: Fields to update
+              summary: body
+        description: Fields to update
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Update workspace
+      tags:
+        - Workspaces
+  /v1/workspaces/{id}/exposures:
+    get:
+      description: List active (and optionally revoked) port exposures for a workspace.
+      operationId: listExposures
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Include revoked exposures (default false)
+          in: query
+          name: include_revoked
+          schema:
+            type: boolean
+        - description: Maximum items per page (default 20, max 100)
+          in: query
+          name: limit
+          schema:
+            type: integer
+        - description: Opaque pagination cursor
+          in: query
+          name: page_token
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ExposurePage'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: List workspace exposures
+      tags:
+        - Exposures
+    post:
+      description: Create a public HTTPS URL forwarding to a TCP port inside a running workspace.
+      operationId: createExposure
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Idempotency key (1-255 chars)
+          in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.CreateExposureRequest'
+              description: Exposure parameters
+              summary: body
+        description: Exposure parameters
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Exposure'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Create workspace exposure
+      tags:
+        - Exposures
+  /v1/workspaces/{id}/exposures/{exposure_id}:
+    delete:
+      description: Revoke a workspace port exposure. Idempotent on already revoked exposures.
+      operationId: revokeExposure
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Exposure ID
+          in: path
+          name: exposure_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Exposure'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Revoke workspace exposure
+      tags:
+        - Exposures
+    get:
+      description: Retrieve a port exposure by ID.
+      operationId: getExposure
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Exposure ID
+          in: path
+          name: exposure_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Exposure'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Get workspace exposure
+      tags:
+        - Exposures
+  /v1/workspaces/{id}/network:
+    put:
+      description: Update a workspace's outbound network policy. Returns 200 when stopped or 202 when running.
+      operationId: setWorkspaceNetwork
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.WorkspaceNetworkInput'
+              description: Network policy
+              summary: body
+        description: Network policy
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Set workspace network policy
+      tags:
+        - Workspaces
+  /v1/workspaces/{id}/start:
+    post:
+      description: Start a stopped or failed workspace asynchronously.
+      operationId: startWorkspace
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Idempotency key (1-255 chars)
+          in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.StartWorkspaceRequest'
+              description: Optional start options
+              summary: body
+        description: Optional start options
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Start workspace
+      tags:
+        - Workspaces
+  /v1/workspaces/{id}/stop:
+    post:
+      description: Stop a workspace asynchronously.
+      operationId: stopWorkspace
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Idempotency key (1-255 chars)
+          in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.StopWorkspaceRequest'
+              description: Optional stop options
+              summary: body
+        description: Optional stop options
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Stop workspace
+      tags:
+        - Workspaces
+  /v1/workspaces/{id}/timeout:
+    post:
+      description: Reset the expiration policy on a running workspace.
+      operationId: setWorkspaceTimeout
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Idempotency key (1-255 chars)
+          in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.WorkspaceTimeoutInput'
+              description: New expiration policy
+              summary: body
+        description: New expiration policy
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Set workspace timeout
+      tags:
+        - Workspaces
+  /v1/workspaces/{id}/volume:
+    delete:
+      description: Detach the volume bound to a stopped or failed workspace.
+      operationId: detachWorkspaceVolume
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Detach volume from workspace
+      tags:
+        - Workspaces
+    put:
+      description: Attach an existing volume in the same zone to a stopped or failed workspace.
+      operationId: attachWorkspaceVolume
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/openapi.WorkspaceVolumeInput'
+              description: Volume binding
+              summary: body
+        description: Volume binding
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Attach volume to workspace
+      tags:
+        - Workspaces
+  /v1/workspaces/{id}/wait:
+    get:
+      description: Block up to 60 seconds waiting for a workspace to enter one of the target statuses.
+      operationId: waitWorkspace
+      parameters:
+        - description: Workspace ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: Target workspace status (repeatable)
+          in: query
+          name: status
+          required: true
+          schema:
+            items:
+              type: string
+            type: array
+        - description: Maximum seconds to wait (default 30, max 60)
+          in: query
+          name: timeout
+          schema:
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.Workspace'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Not Found
+        "408":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Request Timeout
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: Wait for workspace status
+      tags:
+        - Workspaces
+  /v1/zones:
+    get:
+      description: List availability zones permitted for the authenticated API key.
+      operationId: listZones
+      parameters:
+        - description: Maximum items per page (default 20, max 100)
+          in: query
+          name: limit
+          schema:
+            type: integer
+        - description: Opaque pagination cursor
+          in: query
+          name: page_token
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ZonePage'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Unauthorized
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/openapi.ErrorResponse'
+          description: Service Unavailable
+      security:
+        - BearerAuth: []
+      summary: List zones
+      tags:
+        - Zones
+servers:
+  - url: https://api.kibo.to
