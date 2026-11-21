@@ -1,0 +1,84 @@
+name: Release TypeScript SDK
+
+on:
+  push:
+    tags:
+      - "ts/v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Build, Test & Publish @kibotos/sdk
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract and verify version against package.json
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#ts/v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version (${VERSION}) does not match sdks/typescript/package.json version (${PKG_VERSION})."
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
+          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
+
+      - name: Upgrade npm for OIDC Trusted Publishing
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build package
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Publish @kibotos/sdk to npm (OIDC Trusted Publishing)
+        run: npm publish --provenance --access public
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "@kibotos/sdk v${{ steps.meta.outputs.version }}"
+          generate_release_notes: true
+
+  notify-docs:
+    name: Notify Docs Sync
+    needs: publish
+    uses: ./.github/workflows/_notify-docs.yml
+    with:
+      sdk: typescript
+      version: ${{ needs.publish.outputs.version }}
+      tag: ${{ needs.publish.outputs.tag }}
+    secrets: inherit

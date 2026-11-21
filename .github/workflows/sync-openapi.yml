@@ -1,0 +1,148 @@
+name: Sync OpenAPI Spec
+
+on:
+  repository_dispatch:
+    types:
+      - sync-openapi
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit SHA, branch, or tag in felinics/kibotos-cloud to sync from
+        required: false
+        default: main
+        type: string
+
+concurrency:
+  group: sync-openapi
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Sync v1.yaml from kibotos-cloud
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check bot token configuration
+        id: check-token
+        env:
+          BOT_TOKEN: ${{ secrets.FELINICS_BOT_TOKEN }}
+        run: |
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "::warning::FELINICS_BOT_TOKEN is not configured; skipping cross-repo OpenAPI sync."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout kibotos-sdk
+        if: steps.check-token.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+
+      - name: Resolve source ref
+        if: steps.check-token.outputs.enabled == 'true'
+        id: ref
+        env:
+          DISPATCH_SHA: ${{ github.event.client_payload.sha }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          TARGET_REF="${DISPATCH_SHA:-${INPUT_SHA:-main}}"
+          echo "target=${TARGET_REF}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout felinics/kibotos-cloud
+        if: steps.check-token.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: felinics/kibotos-cloud
+          ref: ${{ steps.ref.outputs.target }}
+          token: ${{ secrets.FELINICS_BOT_TOKEN }}
+          path: _kibotos_cloud
+
+      - name: Copy openapi/v1.yaml and detect changes
+        if: steps.check-token.outputs.enabled == 'true'
+        id: sync
+        run: |
+          SHORT_SHA="$(git -C _kibotos_cloud rev-parse --short HEAD)"
+          FULL_SHA="$(git -C _kibotos_cloud rev-parse HEAD)"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "full_sha=${FULL_SHA}" >> "$GITHUB_OUTPUT"
+
+          if [ -f openapi/v1.yaml ]; then
+            cp openapi/v1.yaml /tmp/prev-v1.yaml
+          else
+            touch /tmp/prev-v1.yaml
+          fi
+
+          mkdir -p openapi
+          cp _kibotos_cloud/api/openapi/v1.yaml openapi/v1.yaml
+          rm -rf _kibotos_cloud
+
+          if git diff --quiet -- openapi/v1.yaml && [ -z "$(git status --porcelain -- openapi/v1.yaml)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "openapi/v1.yaml is already up to date with kibotos-cloud@${SHORT_SHA}."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Go for oasdiff
+        if: steps.check-token.outputs.enabled == 'true' && steps.sync.outputs.changed == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Generate OpenAPI changelog with oasdiff
+        if: steps.check-token.outputs.enabled == 'true' && steps.sync.outputs.changed == 'true'
+        env:
+          SHORT_SHA: ${{ steps.sync.outputs.short_sha }}
+          FULL_SHA: ${{ steps.sync.outputs.full_sha }}
+        run: |
+          go install github.com/tufin/oasdiff@latest
+
+          CHANGELOG_FILE="/tmp/oasdiff-changelog.md"
+          if [ -s /tmp/prev-v1.yaml ]; then
+            if ! oasdiff changelog --format markdown /tmp/prev-v1.yaml openapi/v1.yaml > "$CHANGELOG_FILE" 2>/tmp/oasdiff-err.log; then
+              echo "_oasdiff could not produce a structured changelog; see diff summary below._" > "$CHANGELOG_FILE"
+              echo "" >> "$CHANGELOG_FILE"
+              echo '```diff' >> "$CHANGELOG_FILE"
+              git diff --stat -- openapi/v1.yaml >> "$CHANGELOG_FILE"
+              echo '```' >> "$CHANGELOG_FILE"
+            fi
+          else
+            echo "_Initial OpenAPI v1.yaml snapshot imported._" > "$CHANGELOG_FILE"
+          fi
+
+          if [ ! -s "$CHANGELOG_FILE" ]; then
+            echo "_No breaking or endpoint-level schema changes reported by oasdiff (formatting/comments/metadata updated)._" > "$CHANGELOG_FILE"
+          fi
+
+          {
+            printf '## OpenAPI v1 Sync\n\n'
+            printf 'Synced `api/openapi/v1.yaml` from `felinics/kibotos-cloud@%s` into `openapi/v1.yaml`.\n\n' "$FULL_SHA"
+            printf '### OpenAPI Changelog (`oasdiff`)\n\n'
+            cat "$CHANGELOG_FILE"
+            printf '\n\n'
+            cat <<'EOF'
+          ### SDK & CLI Update Checklist
+
+          - [ ] Review endpoint, parameter, and schema changes above
+          - [ ] Update **Go SDK** (`sdks/go`) + tests + colocated docs
+          - [ ] Update **TypeScript SDK** (`sdks/typescript`) + tests + colocated docs
+          - [ ] Update **Python SDK** (`sdks/python`) + tests + colocated docs
+          - [ ] Update **`kibo` CLI** (`cli/`) + `use-kibo` skill (`skills/use-kibo/`) + colocated docs
+          - [ ] Update package `CHANGELOG.md` entries before tagging releases
+          EOF
+          } > /tmp/pr-body.md
+
+      - name: Create or update Pull Request
+        if: steps.check-token.outputs.enabled == 'true' && steps.sync.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.FELINICS_BOT_TOKEN }}
+          branch: chore/sync-openapi-v1
+          delete-branch: true
+          commit-message: "chore(openapi): sync v1.yaml from kibotos-cloud@${{ steps.sync.outputs.short_sha }}"
+          title: "chore(openapi): sync v1.yaml from kibotos-cloud@${{ steps.sync.outputs.short_sha }}"
+          body-path: /tmp/pr-body.md
+          labels: openapi,automated

@@ -1,0 +1,70 @@
+name: Release Go SDK
+
+on:
+  push:
+    tags:
+      - "sdks/go/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Verify, Index & Release Go SDK
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    defaults:
+      run:
+        working-directory: sdks/go
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract and verify version
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#sdks/go/v}"
+          CODE_VERSION="$(sed -nE 's/^[[:space:]]*Version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' client.go | head -n 1)"
+          if [ -n "$CODE_VERSION" ] && [ "$VERSION" != "$CODE_VERSION" ]; then
+            echo "::error::Tag version (${VERSION}) does not match sdks/go/client.go Version (${CODE_VERSION})."
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: sdks/go/go.mod
+
+      - name: Run tests with race detector
+        run: go test -race -v ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Trigger proxy.golang.org indexing
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          GOPROXY=https://proxy.golang.org go list -m "github.com/felinics/kibotos-sdk/sdks/go@v${VERSION}" || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Go SDK v${{ steps.meta.outputs.version }}"
+          generate_release_notes: true
+
+  notify-docs:
+    name: Notify Docs Sync
+    needs: publish
+    uses: ./.github/workflows/_notify-docs.yml
+    with:
+      sdk: go
+      version: ${{ needs.publish.outputs.version }}
+      tag: ${{ needs.publish.outputs.tag }}
+    secrets: inherit

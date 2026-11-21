@@ -1,0 +1,202 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go-sdk:
+    name: Go SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: sdks/go/go.mod
+
+      - name: Run tests with race detector
+        run: go test -race -v ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+  cli:
+    name: kibo CLI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: cli/go.sum
+
+      - name: Run tests with race detector
+        run: go test -race -v ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Build kibo binary
+        run: go build -o /tmp/kibo ./cmd/kibo && /tmp/kibo version
+
+  typescript-sdk:
+    name: TypeScript SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+  python-sdk:
+    name: Python SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime dependencies
+        run: python -m pip install --upgrade pip && python -m pip install "httpx>=0.27" "pydantic>=2.7"
+
+      - name: Run unit tests
+        env:
+          PYTHONPATH: src
+        run: python3 -m unittest discover -s tests -v
+
+  docs-check:
+    name: Docs Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate colocated docs, meta.json, frontmatter, and naming
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          doc_dirs = [
+              pathlib.Path("sdks/typescript/docs"),
+              pathlib.Path("sdks/python/docs"),
+              pathlib.Path("sdks/go/docs"),
+              pathlib.Path("cli/docs"),
+          ]
+
+          errors: list[str] = []
+          fm_re = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
+
+          for d in doc_dirs:
+              meta_path = d / "meta.json"
+              if not meta_path.is_file():
+                  errors.append(f"Missing {meta_path}")
+                  continue
+
+              try:
+                  meta = json.loads(meta_path.read_text(encoding="utf-8"))
+              except json.JSONDecodeError as exc:
+                  errors.append(f"Invalid JSON in {meta_path}: {exc}")
+                  continue
+
+              pages = meta.get("pages")
+              if not isinstance(pages, list) or not pages:
+                  errors.append(f"{meta_path}: 'pages' must be a non-empty list")
+                  continue
+
+              listed_files: set[pathlib.Path] = set()
+              for slug in pages:
+                  mdx = d / f"{slug}.mdx"
+                  listed_files.add(mdx)
+                  if not mdx.is_file():
+                      errors.append(f"{meta_path} references missing file: {mdx}")
+
+              actual_files = set(d.glob("*.mdx"))
+              unlisted = sorted(actual_files - listed_files)
+              for extra in unlisted:
+                  errors.append(f"MDX file not listed in {meta_path}: {extra}")
+
+              for mdx in sorted(actual_files):
+                  text = mdx.read_text(encoding="utf-8")
+                  m = fm_re.match(text)
+                  if not m:
+                      errors.append(f"{mdx}: missing YAML frontmatter")
+                      continue
+                  fm = m.group(1)
+                  has_title = bool(re.search(r"^title:\s*.+$", fm, re.MULTILINE))
+                  has_desc = bool(re.search(r"^description:\s*.+$", fm, re.MULTILINE))
+                  if not has_title:
+                      errors.append(f"{mdx}: frontmatter missing non-empty 'title'")
+                  if not has_desc:
+                      errors.append(f"{mdx}: frontmatter missing non-empty 'description'")
+                  if re.search(r"kibotos\s+cloud", text, re.IGNORECASE):
+                      errors.append(f"{mdx}: forbidden product name 'Kibotos Cloud' found")
+
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}", file=sys.stderr)
+              sys.exit(1)
+
+          print("All colocated SDK & CLI docs validated cleanly.")
+          PY

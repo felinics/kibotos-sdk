@@ -1,0 +1,57 @@
+version: 2
+
+project_name: kibo
+
+monorepo:
+  tag_prefix: cli/
+
+builds:
+  - id: kibo
+    dir: cli
+    main: ./cmd/kibo
+    binary: kibo
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+archives:
+  - id: kibo
+    ids:
+      - kibo
+    name_template: "kibo_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - cli/README.md
+      - cli/CHANGELOG.md
+
+checksum:
+  name_template: "SHA256SUMS"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore\\(openapi\\):"
+
+release:
+  github:
+    owner: felinics
+    name: kibotos-sdk
+  name_template: "kibo v{{ .Version }}"
