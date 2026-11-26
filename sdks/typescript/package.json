@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "description": "Official zero-dependency TypeScript and JavaScript SDK for the Kibotos v1 API",
   "license": "MIT",
+  "homepage": "https://docs.kibo.to",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felinics/kibotos-sdk.git",
+    "directory": "sdks/typescript"
+  },
   "type": "module",
   "sideEffects": false,
   "engines": {
