@@ -120,7 +120,7 @@ export class WorkspacesResource {
   }
 
   /**
-   * Stops a running workspace (`202 Accepted`).
+   * Stops an available workspace (`202 Accepted`).
    * `POST /v1/workspaces/{id}/stop`
    */
   stop(id: string, body?: StopWorkspaceRequest, opts?: RequestOptions): Promise<Workspace> {

@@ -67,7 +67,7 @@ kibo login
 # Verify your active profile and available zones
 kibo whoami
 
-# Create a workspace and wait until it is running
+# Create a workspace and wait until it is available
 kibo workspace create --template python-3.12 --name my-sandbox --wait
 
 # Expose a port over a temporary HTTPS URL

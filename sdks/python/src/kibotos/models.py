@@ -17,10 +17,11 @@ class KibotosModel(BaseModel):
 # Known status/enum string types (union with str preserves forward compatibility).
 ZoneStatus = Literal["available", "draining"] | str
 TemplateOwner = Literal["platform", "organization"] | str
+# Maps 1:1 to native Kibotos WorkspaceState in lowercase.
 WorkspaceStatus = (
     Literal[
         "creating",
-        "running",
+        "available",
         "stopping",
         "stopped",
         "starting",
@@ -30,6 +31,10 @@ WorkspaceStatus = (
     ]
     | str
 )
+# Maps 1:1 to native Kibotos VolumeState in lowercase:
+# workspace_id expresses binding; "available" means ready and not mounted to a
+# running workspace; "attached" means mounted to a running workspace; "lost"
+# means the underlying storage pool was lost.
 VolumeStatus = (
     Literal[
         "creating",
@@ -38,6 +43,7 @@ VolumeStatus = (
         "resizing",
         "deleting",
         "failed",
+        "lost",
         "unknown",
     ]
     | str
@@ -61,6 +67,7 @@ class Zone(KibotosModel):
     id: str
     display_name: str
     region: str
+    country: str | None = None
     status: ZoneStatus
     default: bool
 

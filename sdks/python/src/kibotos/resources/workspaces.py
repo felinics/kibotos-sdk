@@ -245,7 +245,7 @@ class WorkspacesResource:
         force: bool | None = None,
         idempotency_key: str | None = None,
     ) -> Workspace:
-        """Stop a running workspace."""
+        """Stop an available workspace."""
         body: dict[str, Any] | None = {"force": force} if force is not None else None
         data = self._transport.request(
             "POST",
@@ -504,7 +504,7 @@ class AsyncWorkspacesResource:
         force: bool | None = None,
         idempotency_key: str | None = None,
     ) -> Workspace:
-        """Stop a running workspace."""
+        """Stop an available workspace."""
         body: dict[str, Any] | None = {"force": force} if force is not None else None
         data = await self._transport.request(
             "POST",

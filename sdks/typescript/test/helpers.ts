@@ -102,6 +102,7 @@ export const sampleZone: Zone = {
   id: 'global-1',
   display_name: 'Global 1',
   region: 'global',
+  country: 'JP',
   status: 'available',
   default: true,
 };
@@ -136,7 +137,7 @@ export const sampleWorkspace: Workspace = {
   name: 'agent-runner',
   zone: 'global-1',
   template: { id: 'python-3.12', revision: 'r42' },
-  status: 'running',
+  status: 'available',
   failure: null,
   resources: { vcpus: 2, memory_mib: 4096, disk_mib: 20480 },
   network: { mode: 'public_internet', applied: true },

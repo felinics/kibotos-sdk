@@ -12,6 +12,10 @@ import (
 )
 
 // VolumeStatus represents the lifecycle state of a volume.
+// Values map 1:1 to native Kibotos VolumeState in lowercase:
+// Volume.WorkspaceID expresses workspace binding, "available" means ready and not
+// currently mounted to a running execution, "attached" means mounted to a running
+// workspace, and "lost" means the underlying storage pool was lost.
 type VolumeStatus string
 
 const (
@@ -21,6 +25,7 @@ const (
 	VolumeStatusResizing  VolumeStatus = "resizing"
 	VolumeStatusDeleting  VolumeStatus = "deleting"
 	VolumeStatusFailed    VolumeStatus = "failed"
+	VolumeStatusLost      VolumeStatus = "lost"
 	VolumeStatusUnknown   VolumeStatus = "unknown"
 )
 

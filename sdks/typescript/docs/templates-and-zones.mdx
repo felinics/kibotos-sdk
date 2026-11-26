@@ -20,7 +20,7 @@ const client = new Kibotos();
 
 const page = await client.zones.list({ limit: 50 });
 for (const zone of page.data) {
-  console.log(zone.id, zone.display_name, zone.region, zone.status, zone.default);
+  console.log(zone.id, zone.display_name, zone.region, zone.country ?? '-', zone.status, zone.default);
 }
 ```
 
@@ -43,6 +43,7 @@ for await (const zone of client.zones.iterate()) {
 | `id` | `string` | Zone identifier (e.g. `'global-1'`). |
 | `display_name` | `string` | Human-readable zone name. |
 | `region` | `string` | Geographic region label. |
+| `country` | `string \| null` | ISO 3166-1 alpha-2 uppercase country/region code (e.g. `'JP'`, `'US'`), or `null` when unspecified. |
 | `status` | `'available' \| 'draining'` | Operational availability of the zone. |
 | `default` | `boolean` | Whether this is your organization's default zone. |
 

@@ -49,7 +49,7 @@ kibo vol update vol_01j9... --clear-name
 
 ### Resize a Volume
 
-Grows a volume to a larger size in GiB. With `--wait`, blocks until status returns to `available` or `attached`:
+Grows an `available` volume to a larger size in GiB (volumes bound to a stopped/failed workspace remain `available` and can be resized). With `--wait`, blocks until status returns to `available`:
 
 ```bash
 kibo vol resize vol_01j9... --size 100 --wait
@@ -57,11 +57,13 @@ kibo vol resize vol_01j9... --size 100 --wait
 
 ### Delete and Wait on a Volume
 
+Valid volume statuses follow native Kibotos 1:1 semantics: `creating`, `available`, `attached`, `resizing`, `deleting`, `failed`, `lost`, `unknown`. `workspace_id` expresses workspace binding; `available` means ready and not mounted to a running workspace; `attached` means mounted to a running workspace; `lost` means the underlying storage pool was lost (read/delete only).
+
 ```bash
 # Wait explicitly for target status(es) (default --timeout: 30)
 kibo vol wait vol_01j9... --status available,failed --timeout 120
 
-# Delete an unattached volume and wait until removed
+# Delete an unbound volume and wait until removed
 kibo vol delete vol_01j9... --wait
 ```
 
@@ -69,7 +71,7 @@ kibo vol delete vol_01j9... --wait
 
 Aliases: `exp`, `exposures`.
 
-Expose any TCP port (`1`–`65535`) inside a running workspace on a temporary public HTTPS URL (`*.kibo.run`).
+Expose any TCP port (`1`–`65535`) inside an `available` workspace on a temporary public HTTPS URL (`*.kibo.run`).
 
 ### Create an Exposure
 
@@ -99,7 +101,7 @@ kibo exp revoke wks_01j9... exp_01j9...
 
 Aliases: `zones`.
 
-List compute zones accessible to your organization (`--limit` and `--page-token` optional; auto-paginates when omitted):
+List compute zones accessible to your organization (`--limit` and `--page-token` optional; auto-paginates when omitted). Table output includes `ID`, `NAME`, `REGION`, `COUNTRY` (ISO 3166-1 alpha-2 code or `-` when unset), `STATUS`, and `DEFAULT`; JSON output includes the nullable `country` field:
 
 ```bash
 kibo zone list

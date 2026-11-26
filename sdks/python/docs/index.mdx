@@ -47,8 +47,8 @@ with Kibotos() as client:
         labels={"team": "ml"},
     )
 
-    # 2. Wait until running (auto-chunks timeouts > 60s)
-    ws = client.workspaces.wait(created.id, status=["running", "failed"], timeout=120)
+    # 2. Wait until available (auto-chunks timeouts > 60s)
+    ws = client.workspaces.wait(created.id, status=["available", "failed"], timeout=120)
     print(f"Workspace {ws.id} is {ws.status} in zone {ws.zone}")
 
     # 3. Expose port 8080 over HTTPS
@@ -75,10 +75,10 @@ async def main() -> None:
             template="python-3.12",
             name="async-agent",
         )
-        ws = await client.workspaces.wait(created.id, status=["running", "failed"], timeout=120)
+        ws = await client.workspaces.wait(created.id, status=["available", "failed"], timeout=120)
         print(ws.id, ws.status)
 
-        async for item in client.workspaces.iterate(status="running"):
+        async for item in client.workspaces.iterate(status="available"):
             print(item.id, item.name)
 
         await client.workspaces.delete(ws.id)

@@ -88,13 +88,13 @@ const updated = await client.volumes.update(vol.id, {
 
 `client.volumes.resize(id: string, body: ResizeVolumeRequest, opts?: RequestOptions): Promise<Volume>`
 
-Grows an existing volume asynchronously (`POST /v1/volumes/{id}/resize`, HTTP `202 Accepted`). Wait for `'available'` (unattached) or `'attached'` (attached) to confirm completion:
+Grows an existing `'available'` volume asynchronously (`POST /v1/volumes/{id}/resize`, HTTP `202 Accepted`). Wait for `'available'` to confirm completion (volumes bound to a stopped or failed workspace remain `'available'` and can be resized):
 
 ```ts
 await client.volumes.resize(vol.id, { size_gib: 100 });
 
 const resized = await client.volumes.wait(vol.id, {
-  status: ['available', 'attached', 'failed'],
+  status: ['available', 'failed'],
   timeoutSeconds: 180,
 });
 console.log('New size:', resized.size_gib, 'GiB');
@@ -104,7 +104,7 @@ console.log('New size:', resized.size_gib, 'GiB');
 
 `client.volumes.delete(id: string, opts?: RequestOptions): Promise<Volume>`
 
-Deletes an unattached volume asynchronously (`DELETE /v1/volumes/{id}`, HTTP `202 Accepted`). Attempting to delete an attached volume throws `ConflictError` (`volume_attached`).
+Deletes an unbound volume (`workspace_id === null`) asynchronously (`DELETE /v1/volumes/{id}`, HTTP `202 Accepted`). Attempting to delete a bound volume throws `ConflictError` (`volume_attached`).
 
 ```ts
 const deleting = await client.volumes.delete(vol.id);
@@ -115,7 +115,9 @@ console.log(deleting.status); // 'deleting'
 
 `client.volumes.wait(id: string, params: WaitVolumeParams, opts?: RequestOptions): Promise<Volume>`
 
-Supported `VolumeStatus` values: `'creating'`, `'available'`, `'attached'`, `'resizing'`, `'deleting'`, `'failed'`, `'unknown'`.
+Supported `VolumeStatus` values: `'creating'`, `'available'`, `'attached'`, `'resizing'`, `'deleting'`, `'failed'`, `'lost'`, `'unknown'`.
+
+Volume statuses follow native Kibotos 1:1 semantics: `workspace_id` expresses whether a volume is bound to a workspace; `'available'` means ready and not currently mounted to a running workspace (including volumes bound to a stopped/failed workspace); `'attached'` means mounted to a running workspace; `'lost'` means the underlying storage pool was lost and data is unrecoverable.
 
 ```ts
 const ready = await client.volumes.wait('vol_01j9...', {

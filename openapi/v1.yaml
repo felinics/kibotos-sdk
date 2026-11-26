@@ -87,12 +87,13 @@ components:
           example: 8080
           type: integer
         revoked_at:
-          type: string
+          type:
+            - string
+            - "null"
         status:
           enum:
             - active
             - revoked
-            - expired
           example: active
           type: string
         url:
@@ -110,7 +111,9 @@ components:
           type: array
           uniqueItems: false
         next_page_token:
-          type: string
+          type:
+            - string
+            - "null"
       type: object
     openapi.Failure:
       properties:
@@ -148,12 +151,18 @@ components:
     openapi.Template:
       properties:
         created_at:
-          type: string
+          type:
+            - string
+            - "null"
         default_revision:
           example: r42
-          type: string
+          type:
+            - string
+            - "null"
         description:
-          type: string
+          type:
+            - string
+            - "null"
         display_name:
           example: Python 3.12
           type: string
@@ -161,7 +170,9 @@ components:
           example: python-3.12
           type: string
         latest_revision:
-          $ref: '#/components/schemas/openapi.LatestTemplateRevision'
+          anyOf:
+            - $ref: '#/components/schemas/openapi.LatestTemplateRevision'
+            - type: "null"
         owner:
           enum:
             - platform
@@ -169,7 +180,9 @@ components:
           example: platform
           type: string
         updated_at:
-          type: string
+          type:
+            - string
+            - "null"
         zones:
           items:
             type: string
@@ -184,7 +197,9 @@ components:
           type: array
           uniqueItems: false
         next_page_token:
-          type: string
+          type:
+            - string
+            - "null"
         unavailable_zones:
           items:
             type: string
@@ -207,18 +222,28 @@ components:
     openapi.TemplateRevision:
       properties:
         created_at:
-          type: string
+          type:
+            - string
+            - "null"
         failure:
-          $ref: '#/components/schemas/openapi.Failure'
+          anyOf:
+            - $ref: '#/components/schemas/openapi.Failure'
+            - type: "null"
         id:
           example: r42
           type: string
         process:
-          $ref: '#/components/schemas/openapi.TemplateProcess'
+          anyOf:
+            - $ref: '#/components/schemas/openapi.TemplateProcess'
+            - type: "null"
         ready_at:
-          type: string
+          type:
+            - string
+            - "null"
         size_mib:
-          type: integer
+          type:
+            - integer
+            - "null"
         source:
           additionalProperties: {}
           type: object
@@ -242,7 +267,9 @@ components:
           type: array
           uniqueItems: false
         next_page_token:
-          type: string
+          type:
+            - string
+            - "null"
       type: object
     openapi.UpdateVolumeRequest:
       properties:
@@ -267,7 +294,9 @@ components:
         created_at:
           type: string
         failure:
-          $ref: '#/components/schemas/openapi.Failure'
+          anyOf:
+            - $ref: '#/components/schemas/openapi.Failure'
+            - type: "null"
         id:
           example: vol_01jd8k3m9qv7x2n4p6r8t0w2y5
           type: string
@@ -277,7 +306,9 @@ components:
           type: object
         name:
           example: datasets
-          type: string
+          type:
+            - string
+            - "null"
         size_gib:
           example: 50
           type: integer
@@ -289,13 +320,16 @@ components:
             - resizing
             - deleting
             - failed
+            - lost
             - unknown
           example: available
           type: string
         updated_at:
           type: string
         workspace_id:
-          type: string
+          type:
+            - string
+            - "null"
         zone:
           example: global-1
           type: string
@@ -308,7 +342,9 @@ components:
           type: array
           uniqueItems: false
         next_page_token:
-          type: string
+          type:
+            - string
+            - "null"
         unavailable_zones:
           items:
             type: string
@@ -320,7 +356,9 @@ components:
         created_at:
           type: string
         failure:
-          $ref: '#/components/schemas/openapi.Failure'
+          anyOf:
+            - $ref: '#/components/schemas/openapi.Failure'
+            - type: "null"
         id:
           example: wks_01jd8k3m9qv7x2n4p6r8t0w2y4
           type: string
@@ -330,7 +368,9 @@ components:
           type: object
         name:
           example: agent-runner
-          type: string
+          type:
+            - string
+            - "null"
         network:
           $ref: '#/components/schemas/openapi.WorkspaceNetwork'
         resources:
@@ -338,23 +378,27 @@ components:
         status:
           enum:
             - creating
-            - running
+            - available
             - stopping
             - stopped
             - starting
             - deleting
             - failed
             - unknown
-          example: running
+          example: available
           type: string
         template:
           $ref: '#/components/schemas/openapi.WorkspaceTemplate'
         timeout:
-          $ref: '#/components/schemas/openapi.WorkspaceTimeout'
+          anyOf:
+            - $ref: '#/components/schemas/openapi.WorkspaceTimeout'
+            - type: "null"
         updated_at:
           type: string
         volume:
-          $ref: '#/components/schemas/openapi.WorkspaceVolume'
+          anyOf:
+            - $ref: '#/components/schemas/openapi.WorkspaceVolume'
+            - type: "null"
         zone:
           example: global-1
           type: string
@@ -362,7 +406,9 @@ components:
     openapi.WorkspaceNetwork:
       properties:
         applied:
-          type: boolean
+          type:
+            - boolean
+            - "null"
         mode:
           enum:
             - public_internet
@@ -387,7 +433,9 @@ components:
           type: array
           uniqueItems: false
         next_page_token:
-          type: string
+          type:
+            - string
+            - "null"
         unavailable_zones:
           items:
             type: string
@@ -485,6 +533,13 @@ components:
       type: object
     openapi.Zone:
       properties:
+        country:
+          example: JP
+          maxLength: 2
+          minLength: 2
+          type:
+            - string
+            - "null"
         default:
           example: true
           type: boolean
@@ -512,7 +567,9 @@ components:
           type: array
           uniqueItems: false
         next_page_token:
-          type: string
+          type:
+            - string
+            - "null"
       type: object
   securitySchemes:
     BearerAuth:
@@ -1508,7 +1565,7 @@ paths:
       tags:
         - Exposures
     post:
-      description: Create a public HTTPS URL forwarding to a TCP port inside a running workspace.
+      description: Create a public HTTPS URL forwarding to a TCP port inside an available workspace.
       operationId: createExposure
       parameters:
         - description: Workspace ID
@@ -1686,7 +1743,7 @@ paths:
         - Exposures
   /v1/workspaces/{id}/network:
     put:
-      description: Update a workspace's outbound network policy. Returns 200 when stopped or 202 when running.
+      description: Update a workspace's outbound network policy. Returns 200 when stopped or 202 when available.
       operationId: setWorkspaceNetwork
       parameters:
         - description: Workspace ID
@@ -1904,7 +1961,7 @@ paths:
         - Workspaces
   /v1/workspaces/{id}/timeout:
     post:
-      description: Reset the expiration policy on a running workspace.
+      description: Reset the expiration policy on an available workspace.
       operationId: setWorkspaceTimeout
       parameters:
         - description: Workspace ID

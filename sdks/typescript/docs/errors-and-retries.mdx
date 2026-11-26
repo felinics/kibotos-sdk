@@ -56,7 +56,7 @@ const client = new Kibotos();
 
 try {
   await client.workspaces.wait('wks_01j9...', {
-    status: 'running',
+    status: 'available',
     timeoutSeconds: 60,
   });
 } catch (err) {
@@ -130,7 +130,7 @@ setTimeout(() => controller.abort(new Error('User cancelled')), 10_000);
 
 const workspace = await client.workspaces.wait(
   'wks_01j9...',
-  { status: 'running', timeoutSeconds: 180 },
+  { status: 'available', timeoutSeconds: 180 },
   { signal: controller.signal },
 );
 ```

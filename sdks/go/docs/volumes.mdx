@@ -82,7 +82,7 @@ vol, err = client.Volumes.Update(ctx, vol.ID, kibotos.UpdateVolumeParams{
 
 `client.Volumes.Resize(ctx context.Context, id string, params ResizeVolumeParams, opts ...RequestOption) (*Volume, error)`
 
-Grows an existing volume asynchronously (`POST /v1/volumes/{id}/resize`, HTTP `202 Accepted`):
+Grows an existing `available` volume asynchronously (`POST /v1/volumes/{id}/resize`, HTTP `202 Accepted`; volumes bound to a stopped/failed workspace remain `available` and can be resized):
 
 ```go
 _, err = client.Volumes.Resize(ctx, vol.ID, kibotos.ResizeVolumeParams{
@@ -95,7 +95,6 @@ if err != nil {
 vol, err = client.Volumes.Wait(ctx, vol.ID, kibotos.WaitVolumeParams{
 	Statuses: []kibotos.VolumeStatus{
 		kibotos.VolumeStatusAvailable,
-		kibotos.VolumeStatusAttached,
 		kibotos.VolumeStatusFailed,
 	},
 	Timeout: 3 * time.Minute,
@@ -106,7 +105,7 @@ vol, err = client.Volumes.Wait(ctx, vol.ID, kibotos.WaitVolumeParams{
 
 `client.Volumes.Delete(ctx context.Context, id string, opts ...RequestOption) (*Volume, error)`
 
-Deletes an unattached volume asynchronously (`DELETE /v1/volumes/{id}`, HTTP `202 Accepted`):
+Deletes an unbound volume (`WorkspaceID == nil`) asynchronously (`DELETE /v1/volumes/{id}`, HTTP `202 Accepted`):
 
 ```go
 deleting, err := client.Volumes.Delete(ctx, vol.ID)
@@ -118,6 +117,8 @@ fmt.Println(deleting.Status) // deleting
 
 ## Wait for Volume Status
 
-Available `VolumeStatus` constants: `VolumeStatusCreating`, `VolumeStatusAvailable`, `VolumeStatusAttached`, `VolumeStatusResizing`, `VolumeStatusDeleting`, `VolumeStatusFailed`, `VolumeStatusUnknown`.
+Available `VolumeStatus` constants: `VolumeStatusCreating`, `VolumeStatusAvailable`, `VolumeStatusAttached`, `VolumeStatusResizing`, `VolumeStatusDeleting`, `VolumeStatusFailed`, `VolumeStatusLost`, `VolumeStatusUnknown`.
+
+Volume statuses follow native Kibotos 1:1 semantics: `WorkspaceID` expresses whether a volume is bound to a workspace; `VolumeStatusAvailable` means ready and not currently mounted to a running workspace (including volumes bound to a stopped/failed workspace); `VolumeStatusAttached` means actively mounted to a running workspace; `VolumeStatusLost` means the underlying storage pool was lost and data is unrecoverable.
 
 When `params.Timeout` is zero, `Wait` uses `ctx`'s deadline if set, or defaults to `30s`. Timeouts longer than `60s` automatically chunk across `<= 60s` server wait windows.

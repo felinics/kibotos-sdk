@@ -19,14 +19,14 @@ describe('workspaces.wait() and volumes.wait()', () => {
     const client = new Kibotos({ apiKey: 'kb_test', fetch });
 
     const ws = await client.workspaces.wait('wks_123', {
-      status: ['running', 'failed'],
+      status: ['available', 'failed'],
     });
 
-    expect(ws.status).toBe('running');
+    expect(ws.status).toBe('available');
     expect(requests).toHaveLength(1);
     expect(requests[0]?.method).toBe('GET');
     expect(requests[0]?.parsedUrl.pathname).toBe('/v1/workspaces/wks_123/wait');
-    expect(requests[0]?.parsedUrl.searchParams.getAll('status')).toEqual(['running', 'failed']);
+    expect(requests[0]?.parsedUrl.searchParams.getAll('status')).toEqual(['available', 'failed']);
     expect(requests[0]?.parsedUrl.searchParams.get('timeout')).toBe('30');
   });
 
@@ -38,17 +38,17 @@ describe('workspaces.wait() and volumes.wait()', () => {
           details: { workspace: { ...sampleWorkspace, status: 'creating' } },
         });
       }
-      return jsonResponse({ ...sampleWorkspace, status: 'running' });
+      return jsonResponse({ ...sampleWorkspace, status: 'available' });
     });
 
     const client = new Kibotos({ apiKey: 'kb_test', fetch, maxRetries: 3 });
 
     const ws = await client.workspaces.wait('wks_123', {
-      status: ['running', 'failed'],
+      status: ['available', 'failed'],
       timeoutSeconds: 150,
     });
 
-    expect(ws.status).toBe('running');
+    expect(ws.status).toBe('available');
     expect(requests).toHaveLength(3);
     expect(requests[0]?.parsedUrl.searchParams.get('timeout')).toBe('60');
     expect(requests[1]?.parsedUrl.searchParams.get('timeout')).toBe('60');
@@ -94,9 +94,20 @@ describe('workspaces.wait() and volumes.wait()', () => {
     const client = new Kibotos({ apiKey: 'kb_test', fetch, maxRetries: 3 });
 
     await expect(
-      client.workspaces.wait('wks_123', { status: 'running', timeoutSeconds: 180 }),
+      client.workspaces.wait('wks_123', { status: 'available', timeoutSeconds: 180 }),
     ).rejects.toBeInstanceOf(UnexpectedStatusError);
     expect(requests).toHaveLength(1);
+  });
+
+  it('supports volume lost status in wait()', async () => {
+    const { fetch, requests } = createMockFetch(() =>
+      jsonResponse({ ...sampleVolume, status: 'lost' }),
+    );
+    const client = new Kibotos({ apiKey: 'kb_test', fetch });
+
+    const vol = await client.volumes.wait('vol_123', { status: ['available', 'lost'] });
+    expect(vol.status).toBe('lost');
+    expect(requests[0]?.parsedUrl.searchParams.getAll('status')).toEqual(['available', 'lost']);
   });
 
   it('respects AbortSignal across multi-chunk wait()', async () => {
@@ -115,7 +126,7 @@ describe('workspaces.wait() and volumes.wait()', () => {
     await expect(
       client.workspaces.wait(
         'wks_123',
-        { status: 'running', timeoutSeconds: 120 },
+        { status: 'available', timeoutSeconds: 120 },
         { signal: controller.signal },
       ),
     ).rejects.toThrow('stop-waiting');
@@ -132,7 +143,7 @@ describe('workspaces.wait() and volumes.wait()', () => {
     ).rejects.toBeInstanceOf(KibotosError);
 
     await expect(
-      client.workspaces.wait('wks_123', { status: 'running', timeoutSeconds: 0 }),
+      client.workspaces.wait('wks_123', { status: 'available', timeoutSeconds: 0 }),
     ).rejects.toBeInstanceOf(KibotosError);
   });
 });

@@ -74,15 +74,20 @@ func (a *App) newZoneCmd() *cobra.Command {
 				if z.Default {
 					def = "yes"
 				}
+				country := "-"
+				if z.Country != nil {
+					country = output.EmptyDash(*z.Country)
+				}
 				rows = append(rows, []string{
 					z.ID,
 					output.EmptyDash(z.DisplayName),
 					output.EmptyDash(z.Region),
+					country,
 					string(z.Status),
 					def,
 				})
 			}
-			return p.Table([]string{"ID", "NAME", "REGION", "STATUS", "DEFAULT"}, rows)
+			return p.Table([]string{"ID", "NAME", "REGION", "COUNTRY", "STATUS", "DEFAULT"}, rows)
 		},
 	}
 

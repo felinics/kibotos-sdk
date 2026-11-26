@@ -17,7 +17,7 @@ import type { KibotosClientOptions } from './types.js';
  *
  * const client = new Kibotos();
  * const ws = await client.workspaces.create({ template: { id: 'python-3.12' } });
- * await client.workspaces.wait(ws.id, { status: ['running', 'failed'] });
+ * await client.workspaces.wait(ws.id, { status: ['available', 'failed'] });
  * ```
  */
 export class Kibotos {

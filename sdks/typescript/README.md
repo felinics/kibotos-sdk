@@ -31,9 +31,9 @@ const created = await client.workspaces.create({
   labels: { env: 'dev' },
 });
 
-// 2. Wait until running (supports timeouts > 60s via automatic chunking)
+// 2. Wait until available (supports timeouts > 60s via automatic chunking)
 const workspace = await client.workspaces.wait(created.id, {
-  status: ['running', 'failed'],
+  status: ['available', 'failed'],
   timeoutSeconds: 120,
 });
 console.log('Workspace ready:', workspace.id, workspace.status);
@@ -83,7 +83,7 @@ Every listable resource exposes an `iterate(...)` method returning an `AsyncIter
 
 ```ts
 for await (const ws of client.workspaces.iterate({
-  status: 'running',
+  status: 'available',
   labels: { team: 'ml', env: 'prod' }, // Serialized as label.team=ml&label.env=prod
   limit: 50,
 })) {

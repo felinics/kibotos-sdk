@@ -65,7 +65,7 @@ kibo whoami
 kibo zone list
 kibo template list
 
-# Create a workspace and wait until it is running
+# Create a workspace and wait until it is available
 kibo workspace create --template python-3.12 --name devbox --timeout 3600 --wait
 
 # Expose port 8080 over a temporary HTTPS URL

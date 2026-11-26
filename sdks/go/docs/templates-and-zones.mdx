@@ -16,8 +16,12 @@ if err != nil {
 	log.Fatal(err)
 }
 for _, z := range page.Data {
-	fmt.Printf("%s (%s, %s) status=%s default=%t\n",
-		z.ID, z.DisplayName, z.Region, z.Status, z.Default)
+	country := "-"
+	if z.Country != nil {
+		country = *z.Country
+	}
+	fmt.Printf("%s (%s, %s, country=%s) status=%s default=%t\n",
+		z.ID, z.DisplayName, z.Region, country, z.Status, z.Default)
 }
 
 // Auto-paginate with iter.Seq2
@@ -31,7 +35,7 @@ for z, err := range client.Zones.Iter(ctx, nil) {
 }
 ```
 
-`ZoneStatus` constants: `ZoneStatusAvailable` (`"available"`) and `ZoneStatusDraining` (`"draining"`).
+`ZoneStatus` constants: `ZoneStatusAvailable` (`"available"`) and `ZoneStatusDraining` (`"draining"`). `Zone.Country` (`*string`) holds the ISO 3166-1 alpha-2 uppercase country/region code (e.g. `"JP"`, `"US"`), or `nil` when unspecified.
 
 ## Templates
 

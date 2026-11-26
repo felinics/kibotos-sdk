@@ -96,7 +96,8 @@ Show CLI version, Go SDK version, Go runtime, and platform.
 ### `kibo zone` (alias: `zones`)
 
 - `kibo zone list [--limit <n>] [--page-token <tok>]`
-  - Returns `{ "data": Zone[], "next_page_token": string | null }`.
+  - Returns `{ "data": Zone[], "next_page_token": string | null }`. Each `Zone` includes `id`, `display_name`, `region`, `country` (ISO 3166-1 alpha-2 uppercase string or `null`), `status`, and `default`.
+  - Table output columns: `ID`, `NAME`, `REGION`, `COUNTRY` (`-` when null/empty), `STATUS`, `DEFAULT`.
   - Auto-paginates all pages when neither `--limit` nor `--page-token` is passed.
 
 ## Template Commands
@@ -115,7 +116,7 @@ Show CLI version, Go SDK version, Go runtime, and platform.
 
 - `kibo workspace list [--status <s>] [--zone <z>] [--label k=v] [--limit <n>] [--page-token <tok>]`
   - `--label` is repeatable.
-  - Status values: `creating`, `running`, `stopping`, `stopped`, `starting`, `deleting`, `failed`, `unknown`.
+  - Status values: `creating`, `available`, `stopping`, `stopped`, `starting`, `deleting`, `failed`, `unknown`.
 - `kibo workspace get <id>`
 - `kibo workspace create --template <id> [flags]`
   - `--template <id>` *(required)*: Template ID
@@ -132,7 +133,7 @@ Show CLI version, Go SDK version, Go runtime, and platform.
   - `--timeout <sec>`: Auto-timeout duration in seconds
   - `--timeout-action <action>`: `stop` or `delete` (requires `--timeout`)
   - `--label k=v`: Workspace label (repeatable)
-  - `--wait`: Block until status reaches `running`
+  - `--wait`: Block until status reaches `available`
   - `--wait-timeout <sec>`: Max wait seconds (default `300`)
 - `kibo workspace update <id> [--name <n>] [--clear-name] [--label k=v] [--unset-label k]`
   - `--name` and `--clear-name` are mutually exclusive. `--label` and `--unset-label` are repeatable.
@@ -153,13 +154,13 @@ Show CLI version, Go SDK version, Go runtime, and platform.
 ### `kibo volume` (aliases: `vol`, `volumes`)
 
 - `kibo volume list [--zone <z>] [--attached <true|false>] [--label k=v] [--limit <n>] [--page-token <tok>]`
-  - Status values: `creating`, `available`, `attached`, `resizing`, `deleting`, `failed`, `unknown`.
+  - Status values: `creating`, `available`, `attached`, `resizing`, `deleting`, `failed`, `lost`, `unknown` (native Kibotos 1:1 semantics: `workspace_id` expresses binding; `available` means ready and not mounted to a running workspace; `attached` means mounted to a running workspace; `lost` means storage pool lost).
 - `kibo volume get <id>`
 - `kibo volume create --size <gib> [--name <n>] [--zone <z>] [--label k=v] [--wait] [--wait-timeout <sec>]`
   - With `--wait`, waits for status `available`.
 - `kibo volume update <id> [--name <n>] [--clear-name] [--label k=v] [--unset-label k]`
 - `kibo volume resize <id> --size <gib> [--wait] [--wait-timeout <sec>]`
-  - Grows volume to a larger size in GiB. With `--wait`, waits for `available` or `attached`.
+  - Grows an `available` volume to a larger size in GiB. With `--wait`, waits for `available`.
 - `kibo volume delete <id> [--wait] [--wait-timeout <sec>]`
 - `kibo volume wait <id> --status <s1,s2> [--timeout <sec>]` (default `--timeout`: `30`)
 

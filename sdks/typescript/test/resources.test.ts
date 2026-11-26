@@ -20,6 +20,7 @@ describe('Resource namespaces', () => {
 
     const page = await client.zones.list({ limit: 10, page_token: 'tok_1' });
     expect(page.data).toEqual([sampleZone]);
+    expect(page.data[0]?.country).toBe('JP');
     expect(page.next_page_token).toBe('tok_2');
 
     expect(requests[0]?.method).toBe('GET');
@@ -102,13 +103,13 @@ describe('Resource namespaces', () => {
 
     // list with labels & multi-status
     await client.workspaces.list({
-      status: ['running', 'starting'],
+      status: ['available', 'starting'],
       zone: 'global-1',
       labels: { team: 'ml', env: 'prod' },
       limit: 50,
     });
     expect(requests[1]?.method).toBe('GET');
-    expect(requests[1]?.parsedUrl.searchParams.getAll('status')).toEqual(['running', 'starting']);
+    expect(requests[1]?.parsedUrl.searchParams.getAll('status')).toEqual(['available', 'starting']);
     expect(requests[1]?.parsedUrl.searchParams.get('zone')).toBe('global-1');
     expect(requests[1]?.parsedUrl.searchParams.get('label.team')).toBe('ml');
     expect(requests[1]?.parsedUrl.searchParams.get('label.env')).toBe('prod');

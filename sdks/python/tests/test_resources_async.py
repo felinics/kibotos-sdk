@@ -142,12 +142,12 @@ class TestAsyncClient(unittest.IsolatedAsyncioTestCase):
                     408,
                     json=make_error(status=408, code="wait_timeout", retryable=True),
                 )
-            return httpx.Response(200, json=make_workspace("wks_01", status="running"))
+            return httpx.Response(200, json=make_workspace("wks_01", status="available"))
 
         async with AsyncKibotos("kb_test", transport=httpx.MockTransport(handler)) as client:
-            wks = await client.workspaces.wait("wks_01", status=["running", "failed"], timeout=130)
+            wks = await client.workspaces.wait("wks_01", status=["available", "failed"], timeout=130)
 
-        self.assertEqual(wks.status, "running")
+        self.assertEqual(wks.status, "available")
         self.assertEqual(chunks, ["60", "60", "10"])
 
     async def test_async_wait_timeout_and_rate_limit_errors(self) -> None:
@@ -194,7 +194,7 @@ class TestAsyncClient(unittest.IsolatedAsyncioTestCase):
             if method == "POST" and path == "/v1/workspaces/wks_01/start":
                 return httpx.Response(202, json=make_workspace("wks_01", status="starting"))
             if method == "POST" and path == "/v1/workspaces/wks_01/timeout":
-                return httpx.Response(200, json=make_workspace("wks_01", status="running"))
+                return httpx.Response(200, json=make_workspace("wks_01", status="available"))
             if method == "PUT" and path == "/v1/workspaces/wks_01/network":
                 return httpx.Response(202, json=make_workspace("wks_01", network_mode="deny_all"))
             if method == "PUT" and path == "/v1/workspaces/wks_01/volume":
@@ -255,7 +255,7 @@ class TestAsyncClient(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await client.workspaces.start("wks_01")).status, "starting")
             self.assertEqual(
                 (await client.workspaces.set_timeout("wks_01", seconds=600, action="stop")).status,
-                "running",
+                "available",
             )
             self.assertEqual(
                 (await client.workspaces.set_network("wks_01", mode="deny_all")).network.mode,

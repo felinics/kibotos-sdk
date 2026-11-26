@@ -22,14 +22,14 @@ with Kibotos() as client:
     zones = client.zones.list()
     print("Zones:", [z.id for z in zones.data])
 
-    # Create a workspace and wait until it is running
+    # Create a workspace and wait until it is available
     wks = client.workspaces.create(
         template="python-3.12",
         name="agent-runner",
         resources={"vcpus": 2, "memory_mib": 4096},
         labels={"team": "ml"},
     )
-    wks = client.workspaces.wait(wks.id, status=["running", "failed"], timeout=120)
+    wks = client.workspaces.wait(wks.id, status=["available", "failed"], timeout=120)
     print(f"Workspace {wks.id} is {wks.status}")
 
     # Expose a port over HTTPS
@@ -50,7 +50,7 @@ from kibotos import AsyncKibotos
 
 async def main() -> None:
     async with AsyncKibotos() as client:
-        async for wks in client.workspaces.iterate(status="running", labels={"team": "ml"}):
+        async for wks in client.workspaces.iterate(status="available", labels={"team": "ml"}):
             print(wks.id, wks.name, wks.status)
 
 asyncio.run(main())

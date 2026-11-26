@@ -42,13 +42,14 @@ class TestSyncResources(unittest.TestCase):
                 )
             return httpx.Response(
                 200,
-                json={"data": [make_zone("eu-1", default=False)], "next_page_token": None},
+                json={"data": [make_zone("eu-1", country=None, default=False)], "next_page_token": None},
             )
 
         with Kibotos("kb_test", transport=httpx.MockTransport(handler)) as client:
             zones = list(client.zones.iterate(limit=1))
 
         self.assertEqual([z.id for z in zones], ["global-1", "eu-1"])
+        self.assertEqual([z.country for z in zones], ["JP", None])
         self.assertEqual(calls[0].url.params["limit"], "1")
         self.assertEqual(calls[1].url.params["page_token"], "tok_2")
 
@@ -144,7 +145,7 @@ class TestSyncResources(unittest.TestCase):
             if method == "POST" and path == "/v1/workspaces/wks_01/start":
                 return httpx.Response(202, json=make_workspace("wks_01", status="starting"))
             if method == "POST" and path == "/v1/workspaces/wks_01/timeout":
-                return httpx.Response(200, json=make_workspace("wks_01", status="running"))
+                return httpx.Response(200, json=make_workspace("wks_01", status="available"))
             if method == "PUT" and path == "/v1/workspaces/wks_01/network":
                 return httpx.Response(
                     202, json=make_workspace("wks_01", network_mode="deny_all")
@@ -182,7 +183,7 @@ class TestSyncResources(unittest.TestCase):
 
             all_wks = list(
                 client.workspaces.iterate(
-                    status="running",
+                    status="available",
                     zone="global-1",
                     labels={"team": "ml", "env": "prod"},
                     limit=1,
@@ -210,7 +211,7 @@ class TestSyncResources(unittest.TestCase):
             self.assertEqual(started.status, "starting")
 
             extended = client.workspaces.set_timeout("wks_01", seconds=1800, action="stop")
-            self.assertEqual(extended.status, "running")
+            self.assertEqual(extended.status, "available")
 
             net_wks = client.workspaces.set_network("wks_01", mode="deny_all")
             self.assertEqual(net_wks.network.mode, "deny_all")
@@ -232,7 +233,7 @@ class TestSyncResources(unittest.TestCase):
 
         # Verify label.<k>=<v> query serialization on GET /v1/workspaces.
         list_params = recorded[1][3]
-        self.assertIn(("status", "running"), list_params)
+        self.assertIn(("status", "available"), list_params)
         self.assertIn(("zone", "global-1"), list_params)
         self.assertIn(("label.team", "ml"), list_params)
         self.assertIn(("label.env", "prod"), list_params)
@@ -259,14 +260,14 @@ class TestSyncResources(unittest.TestCase):
                         details={"workspace": make_workspace(status="creating")},
                     ),
                 )
-            return httpx.Response(200, json=make_workspace(status="running"))
+            return httpx.Response(200, json=make_workspace(status="available"))
 
         with Kibotos("kb_test", transport=httpx.MockTransport(handler_succeeds)) as client:
-            wks = client.workspaces.wait("wks_01", status=["running", "failed"], timeout=125)
+            wks = client.workspaces.wait("wks_01", status=["available", "failed"], timeout=125)
 
-        self.assertEqual(wks.status, "running")
+        self.assertEqual(wks.status, "available")
         self.assertEqual(observed_timeouts, ["60", "60", "5"])
-        self.assertEqual(observed_statuses[0], ["running", "failed"])
+        self.assertEqual(observed_statuses[0], ["available", "failed"])
 
         # Exhausted timeout raises WaitTimeoutError with details preserved.
         always_timeout = httpx.MockTransport(
@@ -282,7 +283,7 @@ class TestSyncResources(unittest.TestCase):
         )
         with Kibotos("kb_test", transport=always_timeout) as client:
             with self.assertRaises(WaitTimeoutError) as ctx:
-                client.workspaces.wait("wks_01", status="running", timeout=70)
+                client.workspaces.wait("wks_01", status="available", timeout=70)
         self.assertEqual(ctx.exception.code, "wait_timeout")
         self.assertIn("workspace", ctx.exception.details)
 
@@ -304,7 +305,7 @@ class TestSyncResources(unittest.TestCase):
 
         with Kibotos("kb_test", transport=httpx.MockTransport(handler_unexpected)) as client:
             with self.assertRaises(UnexpectedStatusError):
-                client.workspaces.wait("wks_01", status="running", timeout=120)
+                client.workspaces.wait("wks_01", status="available", timeout=120)
         self.assertEqual(unexpected_calls, 1)
 
     def test_volumes_endpoints_and_wait(self) -> None:
@@ -346,6 +347,8 @@ class TestSyncResources(unittest.TestCase):
                         408, json=make_error(status=408, code="wait_timeout", retryable=True)
                     )
                 return httpx.Response(200, json=make_volume("vol_01", size_gib=100, status="available"))
+            if method == "GET" and path == "/v1/volumes/vol_lost":
+                return httpx.Response(200, json=make_volume("vol_lost", status="lost"))
             if method == "DELETE" and path == "/v1/volumes/vol_01":
                 return httpx.Response(202, json=make_volume("vol_01", status="deleting"))
             return httpx.Response(404, json=make_error(status=404, code="not_found"))
@@ -371,6 +374,9 @@ class TestSyncResources(unittest.TestCase):
             ready = client.volumes.wait("vol_01", status="available", timeout=90)
             self.assertEqual(ready.status, "available")
             self.assertEqual(wait_chunks, ["60", "30"])
+
+            lost = client.volumes.get("vol_lost")
+            self.assertEqual(lost.status, "lost")
 
             deleting = client.volumes.delete("vol_01")
             self.assertEqual(deleting.status, "deleting")

@@ -25,7 +25,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("list zones: %v", err)
 		}
-		fmt.Printf("  - %s (%s, status=%s, default=%v)\n", zone.ID, zone.DisplayName, zone.Status, zone.Default)
+		country := "-"
+		if zone.Country != nil {
+			country = *zone.Country
+		}
+		fmt.Printf("  - %s (%s, country=%s, status=%s, default=%v)\n", zone.ID, zone.DisplayName, country, zone.Status, zone.Default)
 	}
 
 	// 2. List platform templates.
@@ -39,7 +43,7 @@ func main() {
 		fmt.Printf("  - %s (%s, default_revision=%s)\n", tpl.ID, tpl.DisplayName, tpl.DefaultRevision)
 	}
 
-	// 3. Create a workspace and wait until it is running.
+	// 3. Create a workspace and wait until it is available.
 	ws, err := client.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
 		Name:     "go-sdk-example",
 		Template: kibotos.WorkspaceTemplateSpec{ID: "python-3.12"},
@@ -61,10 +65,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("create workspace: %v", err)
 	}
-	fmt.Printf("\nCreated workspace %s (status=%s), waiting for running...\n", ws.ID, ws.Status)
+	fmt.Printf("\nCreated workspace %s (status=%s), waiting for available...\n", ws.ID, ws.Status)
 
 	ws, err = client.Workspaces.Wait(ctx, ws.ID, kibotos.WaitWorkspaceParams{
-		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning},
+		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable},
 		Timeout:  3 * time.Minute,
 	})
 	if err != nil {

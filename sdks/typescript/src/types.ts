@@ -127,6 +127,8 @@ export interface Zone {
   id: string;
   display_name: string;
   region: string;
+  /** ISO 3166-1 alpha-2 uppercase country/region code (e.g. `"JP"`, `"US"`), or `null` when unspecified. */
+  country: string | null;
   status: ZoneStatus;
   default: boolean;
 }
@@ -180,9 +182,12 @@ export type ListTemplateRevisionsParams = PaginationParams;
 // Workspaces
 // ---------------------------------------------------------------------------
 
+/**
+ * Workspace lifecycle status. Maps 1:1 to native Kibotos WorkspaceState in lowercase.
+ */
 export type WorkspaceStatus =
   | 'creating'
-  | 'running'
+  | 'available'
   | 'stopping'
   | 'stopped'
   | 'starting'
@@ -350,6 +355,12 @@ export interface ListExposuresParams extends PaginationParams {
 // Volumes
 // ---------------------------------------------------------------------------
 
+/**
+ * Volume lifecycle status. Maps 1:1 to native Kibotos VolumeState in lowercase:
+ * `workspace_id` expresses workspace binding; `available` means ready and not
+ * mounted to a running workspace; `attached` means mounted to a running workspace;
+ * `lost` means the underlying storage pool was lost.
+ */
 export type VolumeStatus =
   | 'creating'
   | 'available'
@@ -357,6 +368,7 @@ export type VolumeStatus =
   | 'resizing'
   | 'deleting'
   | 'failed'
+  | 'lost'
   | 'unknown';
 
 export interface Volume {

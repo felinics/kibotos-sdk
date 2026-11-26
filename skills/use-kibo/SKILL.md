@@ -54,7 +54,7 @@ kibo template get python-3.12 --json
 kibo template revisions python-3.12 --json
 ```
 
-### Spin Up a Kibo Workspace (and Wait Until Running)
+### Spin Up a Kibo Workspace (and Wait Until Available)
 
 ```bash
 kibo workspace create \
@@ -92,7 +92,7 @@ kibo workspace start wks_... --wait --json
 ### Extend Timeout, Toggle Network, Stop, or Clean Up
 
 ```bash
-# Extend running workspace timeout by 2 hours
+# Extend available workspace timeout by 2 hours
 kibo workspace timeout wks_... --seconds 7200 --action stop --json
 
 # Lock down outbound internet access (and wait until applied)

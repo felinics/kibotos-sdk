@@ -31,7 +31,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Create a workspace and wait for it to become running.
+	// Create a workspace and wait for it to become available.
 	ws, err := client.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
 		Name:     "agent-runner",
 		Template: kibotos.WorkspaceTemplateSpec{ID: "python-3.12"},
@@ -50,7 +50,7 @@ func main() {
 	}
 
 	ws, err = client.Workspaces.Wait(ctx, ws.ID, kibotos.WaitWorkspaceParams{
-		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning},
+		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable},
 		Timeout:  3 * time.Minute,
 	})
 	if err != nil {
@@ -88,7 +88,7 @@ Every listable service provides an `Iter` method returning `iter.Seq2[T, error]`
 
 ```go
 for ws, err := range client.Workspaces.Iter(ctx, &kibotos.WorkspaceListParams{
-	Status: kibotos.WorkspaceStatusRunning,
+	Status: kibotos.WorkspaceStatusAvailable,
 	Labels: map[string]string{"team": "ml"},
 }) {
 	if err != nil {

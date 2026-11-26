@@ -22,7 +22,7 @@ async function main(): Promise<void> {
   }
   console.log(`Using template: ${template.id} (default revision: ${template.default_revision})`);
 
-  // 2. Create a workspace and wait until it is running
+  // 2. Create a workspace and wait until it is available
   const created = await client.workspaces.create({
     name: 'ts-sdk-quickstart',
     zone: defaultZone?.id,
@@ -34,15 +34,15 @@ async function main(): Promise<void> {
   console.log(`Created workspace ${created.id} (status: ${created.status})`);
 
   try {
-    const running = await client.workspaces.wait(created.id, {
-      status: ['running', 'failed'],
+    const workspace = await client.workspaces.wait(created.id, {
+      status: ['available', 'failed'],
       timeoutSeconds: 120,
     });
-    console.log(`Workspace ${running.id} reached status: ${running.status}`);
+    console.log(`Workspace ${workspace.id} reached status: ${workspace.status}`);
 
-    if (running.status === 'running') {
+    if (workspace.status === 'available') {
       // 3. Create a temporary HTTPS exposure for port 8080
-      const exposure = await client.exposures.create(running.id, {
+      const exposure = await client.exposures.create(workspace.id, {
         port: 8080,
         ttl_seconds: 600,
       });
@@ -54,7 +54,7 @@ async function main(): Promise<void> {
       }
 
       // 5. Revoke exposure before tearing down
-      await client.exposures.revoke(running.id, exposure.id);
+      await client.exposures.revoke(workspace.id, exposure.id);
       console.log(`Revoked exposure ${exposure.id}`);
     }
   } catch (err) {

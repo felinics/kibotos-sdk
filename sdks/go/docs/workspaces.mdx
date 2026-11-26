@@ -52,7 +52,7 @@ Blocks until the workspace reaches one of `params.Statuses`, fails with `unexpec
 ```go
 ws, err := client.Workspaces.Wait(ctx, created.ID, kibotos.WaitWorkspaceParams{
 	Statuses: []kibotos.WorkspaceStatus{
-		kibotos.WorkspaceStatusRunning,
+		kibotos.WorkspaceStatusAvailable,
 		kibotos.WorkspaceStatusFailed,
 	},
 	Timeout: 3 * time.Minute,
@@ -65,7 +65,7 @@ if ws.Status == kibotos.WorkspaceStatusFailed && ws.Failure != nil {
 }
 ```
 
-Available `WorkspaceStatus` constants: `WorkspaceStatusCreating`, `WorkspaceStatusRunning`, `WorkspaceStatusStopping`, `WorkspaceStatusStopped`, `WorkspaceStatusStarting`, `WorkspaceStatusDeleting`, `WorkspaceStatusFailed`, `WorkspaceStatusUnknown`.
+Available `WorkspaceStatus` constants: `WorkspaceStatusCreating`, `WorkspaceStatusAvailable`, `WorkspaceStatusStopping`, `WorkspaceStatusStopped`, `WorkspaceStatusStarting`, `WorkspaceStatusDeleting`, `WorkspaceStatusFailed`, `WorkspaceStatusUnknown`.
 
 ## List and Iterate Workspaces (`iter.Seq2`)
 
@@ -75,7 +75,7 @@ Returns `*kibotos.MultiZonePage[kibotos.Workspace]`:
 
 ```go
 page, err := client.Workspaces.List(ctx, &kibotos.WorkspaceListParams{
-	Status: kibotos.WorkspaceStatusRunning,
+	Status: kibotos.WorkspaceStatusAvailable,
 	Zone:   "global-1",
 	Labels: map[string]string{"team": "ml"},
 	Limit:  20,
@@ -93,7 +93,7 @@ fmt.Printf("Count: %d, HasMore: %t, UnavailableZones: %v\n",
 
 ```go
 for ws, err := range client.Workspaces.Iter(ctx, &kibotos.WorkspaceListParams{
-	Status: kibotos.WorkspaceStatusRunning,
+	Status: kibotos.WorkspaceStatusAvailable,
 	Labels: map[string]string{"team": "ml"},
 }) {
 	if err != nil {

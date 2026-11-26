@@ -262,10 +262,10 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 				return err
 			}
 
-			if wait && ws.Status != kibotos.WorkspaceStatusRunning {
-				a.printer().Statusf("Waiting for workspace %s to reach running...", ws.ID)
+			if wait && ws.Status != kibotos.WorkspaceStatusAvailable {
+				a.printer().Statusf("Waiting for workspace %s to reach available...", ws.ID)
 				ws, err = client.Workspaces.Wait(ctx, ws.ID, kibotos.WaitWorkspaceParams{
-					Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning},
+					Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable},
 					Timeout:  time.Duration(waitTimeout) * time.Second,
 				})
 				if err != nil {
@@ -292,7 +292,7 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 	f.IntVar(&timeoutSec, "timeout", 0, "Auto-timeout duration in seconds")
 	f.StringVar(&timeoutAction, "timeout-action", "", "Action on timeout expiration: stop or delete")
 	f.StringArrayVar(&labels, "label", nil, "Workspace label (key=value, repeatable)")
-	f.BoolVar(&wait, "wait", false, "Wait until the workspace reaches running")
+	f.BoolVar(&wait, "wait", false, "Wait until the workspace reaches available")
 	f.IntVar(&waitTimeout, "wait-timeout", defaultWaitTimeoutSeconds, "Maximum seconds to wait when --wait is set")
 	return cmd
 }
@@ -434,10 +434,10 @@ func (a *App) newWorkspaceStartCmd() *cobra.Command {
 				return err
 			}
 
-			if wait && ws.Status != kibotos.WorkspaceStatusRunning {
-				a.printer().Statusf("Waiting for workspace %s to reach running...", ws.ID)
+			if wait && ws.Status != kibotos.WorkspaceStatusAvailable {
+				a.printer().Statusf("Waiting for workspace %s to reach available...", ws.ID)
 				ws, err = client.Workspaces.Wait(ctx, ws.ID, kibotos.WaitWorkspaceParams{
-					Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning},
+					Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable},
 					Timeout:  time.Duration(waitTimeout) * time.Second,
 				})
 				if err != nil {
@@ -451,7 +451,7 @@ func (a *App) newWorkspaceStartCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.IntVar(&timeoutSec, "timeout", 0, "Auto-timeout duration in seconds")
 	f.StringVar(&timeoutAction, "timeout-action", "", "Action on timeout expiration: stop or delete")
-	f.BoolVar(&wait, "wait", false, "Wait until the workspace reaches running")
+	f.BoolVar(&wait, "wait", false, "Wait until the workspace reaches available")
 	f.IntVar(&waitTimeout, "wait-timeout", defaultWaitTimeoutSeconds, "Maximum seconds to wait when --wait is set")
 	return cmd
 }
@@ -465,7 +465,7 @@ func (a *App) newWorkspaceStopCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "stop <id>",
-		Short: "Stop a running workspace",
+		Short: "Stop an available workspace",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if wait && waitTimeout <= 0 {
@@ -675,7 +675,7 @@ func (a *App) newWorkspaceWaitCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(statuses) == 0 {
-				return usageError("--status is required (e.g. --status running,failed)")
+				return usageError("--status is required (e.g. --status available,failed)")
 			}
 			if timeout <= 0 {
 				return usageError("--timeout must be greater than zero")

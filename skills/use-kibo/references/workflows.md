@@ -13,7 +13,7 @@ kibo whoami --json
 # 2. Pick a ready template
 kibo template list --json
 
-# 3. Create workspace and block until running
+# 3. Create workspace and block until available
 WS_ID=$(kibo workspace create \
   --template python-3.12 \
   --name preview-sandbox \
@@ -51,11 +51,11 @@ WS_ID=$(kibo workspace create \
   --mount-path /data \
   --wait --json | jq -r '.id')
 
-# 3. Later, grow the volume to 100 GiB
+# 3. Later, stop the workspace (volume returns to available) and grow the volume to 100 GiB
+kibo workspace stop "$WS_ID" --wait --json
 kibo volume resize "$VOL_ID" --size 100 --wait --json
 
 # 4. Detach the volume before deleting it or moving it to another workspace
-kibo workspace stop "$WS_ID" --wait --json
 kibo workspace volume detach "$WS_ID" --json
 ```
 
@@ -100,9 +100,9 @@ kibo workspace list --profile prod --json
 | Exit `3` (`unauthenticated`) | Missing or revoked API key | Ask user to run `kibo login` or set `KIBOTOS_API_KEY` |
 | `zone_mismatch` (`400`) | Volume is in a different zone than the workspace | Inspect `kibo volume get <vol_id> --json` and pass matching `--zone` |
 | `template_unavailable_in_zone` (`400`) | Template is not replicated to the requested zone | Check `kibo template get <id> --json` `.zones` and pick a supported zone |
-| `invalid_state` (`409`) | Operation requires another status (e.g. attach/detach volume while running) | Check `kibo workspace get <id> --json`, stop or start with `--wait` first |
-| `operation_in_progress` (`409`, retryable) | Workspace/volume is mid-transition | Wait for current transition (`kibo workspace wait <id> --status running,stopped,failed`) then retry |
-| `volume_attached` (`409`) | Deleting a volume still attached to a workspace | Stop the workspace, run `kibo workspace volume detach <ws_id>`, then delete the volume |
+| `invalid_state` (`409`) | Operation requires another status (e.g. attach/detach volume while `available`) | Check `kibo workspace get <id> --json`, stop or start with `--wait` first |
+| `operation_in_progress` (`409`, retryable) | Workspace/volume is mid-transition | Wait for current transition (`kibo workspace wait <id> --status available,stopped,failed`) then retry |
+| `volume_attached` (`409`) | Deleting a volume still bound (`workspace_id != null`) to a workspace | Stop the workspace, run `kibo workspace volume detach <ws_id>`, then delete the volume |
 | `wait_timeout` (`408`, retryable) | Operation took longer than wait window | Inspect current state with `get` and re-run `kibo workspace wait` / `kibo volume wait` with a larger `--timeout` |
-| `unexpected_status` (`409`) | Resource transitioned to `failed` during `--wait` | Run `kibo workspace get <id> --json` (or `volume get`) and inspect `.failure.code` and `.failure.message` |
+| `unexpected_status` (`409`) | Resource transitioned to `failed` (or `lost` for volumes) during `--wait` | Run `kibo workspace get <id> --json` (or `volume get`) and inspect `.status`, `.failure.code`, and `.failure.message` |
 | Non-empty `unavailable_zones` in list | One or more zones were temporarily unreachable during fan-out | Inform the user which zones were unavailable; retry or query a specific `--zone` |

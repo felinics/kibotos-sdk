@@ -206,7 +206,7 @@ func TestRetryOnRetryable409AndNoRetryOnNonRetryable(t *testing.T) {
 		case "/v1/workspaces/wks_bad/start":
 			nonRetryableAttempts.Add(1)
 			w.WriteHeader(http.StatusConflict)
-			_, _ = w.Write([]byte(`{"error":{"code":"invalid_state","message":"already running","status":409,"request_id":"req_2","retryable":false,"details":{"current":"running"}}}`))
+			_, _ = w.Write([]byte(`{"error":{"code":"invalid_state","message":"already available","status":409,"request_id":"req_2","retryable":false,"details":{"current":"available"}}}`))
 		}
 	}))
 	defer srv.Close()
@@ -239,7 +239,7 @@ func TestRetryOnRetryable409AndNoRetryOnNonRetryable(t *testing.T) {
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *APIError, got %T", err)
 	}
-	if apiErr.Code != "invalid_state" || apiErr.RequestID != "req_2" || apiErr.Details["current"] != "running" {
+	if apiErr.Code != "invalid_state" || apiErr.RequestID != "req_2" || apiErr.Details["current"] != "available" {
 		t.Fatalf("unexpected APIError: %+v", apiErr)
 	}
 	if kibotos.IsRetryable(err) {

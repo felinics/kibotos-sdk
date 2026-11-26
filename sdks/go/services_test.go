@@ -25,9 +25,9 @@ func TestZonesListAndIter(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Query().Get("page_token") {
 		case "":
-			_, _ = w.Write([]byte(`{"data":[{"id":"global-1","display_name":"Global 1","region":"global","status":"available","default":true}],"next_page_token":"p2"}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"global-1","display_name":"Global 1","region":"global","country":"JP","status":"available","default":true}],"next_page_token":"p2"}`))
 		case "p2":
-			_, _ = w.Write([]byte(`{"data":[{"id":"eu-1","display_name":"EU 1","region":"eu","status":"draining","default":false}],"next_page_token":null}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"eu-1","display_name":"EU 1","region":"eu","country":null,"status":"draining","default":false}],"next_page_token":null}`))
 		default:
 			t.Fatalf("unexpected page_token %q", r.URL.Query().Get("page_token"))
 		}
@@ -35,16 +35,21 @@ func TestZonesListAndIter(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL))
-	var ids []string
+	var zones []kibotos.Zone
 	for z, err := range c.Zones.Iter(context.Background(), &kibotos.ZoneListParams{Limit: 1}) {
 		if err != nil {
 			t.Fatalf("Zones.Iter: %v", err)
 		}
-		ids = append(ids, z.ID)
+		zones = append(zones, z)
 	}
-	want := []string{"global-1", "eu-1"}
-	if !reflect.DeepEqual(ids, want) {
-		t.Fatalf("got zone IDs %v, want %v", ids, want)
+	if len(zones) != 2 || zones[0].ID != "global-1" || zones[1].ID != "eu-1" {
+		t.Fatalf("got zones %+v", zones)
+	}
+	if zones[0].Country == nil || *zones[0].Country != "JP" {
+		t.Fatalf("expected global-1 country=JP, got %v", zones[0].Country)
+	}
+	if zones[1].Country != nil {
+		t.Fatalf("expected eu-1 country=nil, got %v", *zones[1].Country)
 	}
 
 	// Early break should stop before fetching the second page.
@@ -190,13 +195,13 @@ func TestWorkspacesAllEndpoints(t *testing.T) {
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces":
 			q := r.URL.Query()
-			if q.Get("status") != "running" || q.Get("zone") != "global-1" || q.Get("label.team") != "ml" {
+			if q.Get("status") != "available" || q.Get("zone") != "global-1" || q.Get("label.team") != "ml" {
 				t.Errorf("unexpected list query: %s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`{"data":[{"id":"wks_1","status":"running"}],"unavailable_zones":[],"next_page_token":null}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"wks_1","status":"available"}],"unavailable_zones":[],"next_page_token":null}`))
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces/wks_1":
-			_, _ = w.Write([]byte(`{"id":"wks_1","status":"running"}`))
+			_, _ = w.Write([]byte(`{"id":"wks_1","status":"available"}`))
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/workspaces/wks_1":
 			var raw map[string]json.RawMessage
@@ -216,7 +221,7 @@ func TestWorkspacesAllEndpoints(t *testing.T) {
 			if v, ok := labels["del_me"]; !ok || v != nil {
 				t.Errorf("expected del_me=null, got ok=%v v=%v", ok, v)
 			}
-			_, _ = w.Write([]byte(`{"id":"wks_1","name":"","status":"running","labels":{"keep":"yes"}}`))
+			_, _ = w.Write([]byte(`{"id":"wks_1","name":"","status":"available","labels":{"keep":"yes"}}`))
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workspaces/wks_1/start":
 			w.WriteHeader(http.StatusAccepted)
@@ -237,11 +242,11 @@ func TestWorkspacesAllEndpoints(t *testing.T) {
 			if body["seconds"] != float64(1800) || body["action"] != "stop" {
 				t.Errorf("unexpected timeout body: %v", body)
 			}
-			_, _ = w.Write([]byte(`{"id":"wks_1","status":"running","timeout":{"expires_at":"2026-11-21T13:00:00Z","action":"stop"}}`))
+			_, _ = w.Write([]byte(`{"id":"wks_1","status":"available","timeout":{"expires_at":"2026-11-21T13:00:00Z","action":"stop"}}`))
 
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/workspaces/wks_1/network":
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(`{"id":"wks_1","status":"running","network":{"mode":"deny_all","applied":false}}`))
+			_, _ = w.Write([]byte(`{"id":"wks_1","status":"available","network":{"mode":"deny_all","applied":false}}`))
 
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/workspaces/wks_1/volume":
 			_, _ = w.Write([]byte(`{"id":"wks_1","status":"stopped","volume":{"id":"vol_1","mount_path":"/data","delete_with_workspace":false}}`))
@@ -278,7 +283,7 @@ func TestWorkspacesAllEndpoints(t *testing.T) {
 	}
 
 	page, err := c.Workspaces.List(ctx, &kibotos.WorkspaceListParams{
-		Status: kibotos.WorkspaceStatusRunning,
+		Status: kibotos.WorkspaceStatusAvailable,
 		Zone:   "global-1",
 		Labels: map[string]string{"team": "ml"},
 	})
@@ -288,7 +293,7 @@ func TestWorkspacesAllEndpoints(t *testing.T) {
 
 	var iterIDs []string
 	for item, err := range c.Workspaces.Iter(ctx, &kibotos.WorkspaceListParams{
-		Status: kibotos.WorkspaceStatusRunning,
+		Status: kibotos.WorkspaceStatusAvailable,
 		Zone:   "global-1",
 		Labels: map[string]string{"team": "ml"},
 	}) {
@@ -356,7 +361,7 @@ func TestWorkspacesWaitChunksAndErrors(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/workspaces/wks_loop/wait":
 			statuses := r.URL.Query()["status"]
-			if !reflect.DeepEqual(statuses, []string{"running", "failed"}) {
+			if !reflect.DeepEqual(statuses, []string{"available", "failed"}) {
 				t.Errorf("unexpected statuses: %v", statuses)
 			}
 			seenTimeouts = append(seenTimeouts, r.URL.Query().Get("timeout"))
@@ -366,7 +371,7 @@ func TestWorkspacesWaitChunksAndErrors(t *testing.T) {
 				_, _ = w.Write([]byte(`{"error":{"code":"wait_timeout","message":"still creating","status":408,"retryable":true}}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"id":"wks_loop","status":"running"}`))
+			_, _ = w.Write([]byte(`{"id":"wks_loop","status":"available"}`))
 
 		case "/v1/workspaces/wks_unexp/wait":
 			w.WriteHeader(http.StatusConflict)
@@ -390,13 +395,13 @@ func TestWorkspacesWaitChunksAndErrors(t *testing.T) {
 
 	// 2-minute timeout -> server chunks capped at 60s, loops cleanly across 408 wait_timeout.
 	ws, err := c.Workspaces.Wait(ctx, "wks_loop", kibotos.WaitWorkspaceParams{
-		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning, kibotos.WorkspaceStatusFailed},
+		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable, kibotos.WorkspaceStatusFailed},
 		Timeout:  120 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Wait wks_loop: %v", err)
 	}
-	if ws.Status != kibotos.WorkspaceStatusRunning || waitCalls.Load() != 3 {
+	if ws.Status != kibotos.WorkspaceStatusAvailable || waitCalls.Load() != 3 {
 		t.Fatalf("got status=%q calls=%d", ws.Status, waitCalls.Load())
 	}
 	for _, to := range seenTimeouts {
@@ -407,7 +412,7 @@ func TestWorkspacesWaitChunksAndErrors(t *testing.T) {
 
 	// unexpected_status returns immediately.
 	_, err = c.Workspaces.Wait(ctx, "wks_unexp", kibotos.WaitWorkspaceParams{
-		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning},
+		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable},
 		Timeout:  10 * time.Second,
 	})
 	if !kibotos.IsUnexpectedStatus(err) {
@@ -416,7 +421,7 @@ func TestWorkspacesWaitChunksAndErrors(t *testing.T) {
 
 	// Context deadline expires mid-request.
 	_, err = c.Workspaces.Wait(ctx, "wks_timeout", kibotos.WaitWorkspaceParams{
-		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning},
+		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable},
 		Timeout:  20 * time.Millisecond,
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -425,7 +430,7 @@ func TestWorkspacesWaitChunksAndErrors(t *testing.T) {
 
 	// Server returns 408 wait_timeout right as deadline expires -> IsWaitTimeout is true.
 	_, err = c.Workspaces.Wait(ctx, "wks_wait_err", kibotos.WaitWorkspaceParams{
-		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning},
+		Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable},
 		Timeout:  30 * time.Millisecond,
 	})
 	if !kibotos.IsWaitTimeout(err) && !errors.Is(err, context.DeadlineExceeded) {
@@ -520,8 +525,11 @@ func TestVolumesAndExposuresAllEndpoints(t *testing.T) {
 		t.Fatalf("volCount = %d, want 1", volCount)
 	}
 
-	if _, err := c.Volumes.Get(ctx, "vol_1"); err != nil {
-		t.Fatalf("Volumes.Get: %v", err)
+	if vol, err := c.Volumes.Get(ctx, "vol_1"); err != nil || vol.Status != kibotos.VolumeStatusAvailable {
+		t.Fatalf("Volumes.Get: %v, %+v", err, vol)
+	}
+	if kibotos.VolumeStatusLost != "lost" {
+		t.Fatalf("VolumeStatusLost = %q, want lost", kibotos.VolumeStatusLost)
 	}
 	if _, err := c.Volumes.Update(ctx, "vol_1", kibotos.UpdateVolumeParams{Name: kibotos.Some("renamed")}); err != nil {
 		t.Fatalf("Volumes.Update: %v", err)

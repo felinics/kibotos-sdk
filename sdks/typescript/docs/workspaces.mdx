@@ -52,7 +52,7 @@ Long-polls `GET /v1/workspaces/{id}/wait` until the workspace reaches one of the
 
 ```ts
 const workspace = await client.workspaces.wait(created.id, {
-  status: ['running', 'failed'],
+  status: ['available', 'failed'],
   timeoutSeconds: 180,
 });
 
@@ -61,7 +61,7 @@ if (workspace.status === 'failed') {
 }
 ```
 
-- `params.status`: A single `WorkspaceStatus` or an array of `WorkspaceStatus[]` (`'creating'`, `'running'`, `'stopping'`, `'stopped'`, `'starting'`, `'deleting'`, `'failed'`, `'unknown'`).
+- `params.status`: A single `WorkspaceStatus` or an array of `WorkspaceStatus[]` (`'creating'`, `'available'`, `'stopping'`, `'stopped'`, `'starting'`, `'deleting'`, `'failed'`, `'unknown'`).
 - `params.timeoutSeconds`: Total wait budget in seconds (defaults to `30`).
 - Throws `WaitTimeoutError` (`408`) if the total timeout elapses, or `UnexpectedStatusError` (`409`) if the workspace enters a terminal/unexpected status not listed in `status`.
 
@@ -73,7 +73,7 @@ if (workspace.status === 'failed') {
 
 ```ts
 const page = await client.workspaces.list({
-  status: 'running',
+  status: 'available',
   zone: 'global-1',
   labels: { team: 'ml' },
   limit: 20,
@@ -96,7 +96,7 @@ Lazily fetches all pages until `next_page_token` is `null`:
 
 ```ts
 for await (const ws of client.workspaces.iterate({
-  status: 'running',
+  status: 'available',
   labels: { env: 'prod' },
   limit: 50,
 })) {
@@ -130,7 +130,7 @@ console.log(deleting.status); // 'deleting'
 ## Start and Stop
 
 ```ts
-// Gracefully stop a running workspace
+// Gracefully stop an available workspace
 await client.workspaces.stop(ws.id);
 await client.workspaces.wait(ws.id, { status: 'stopped', timeoutSeconds: 60 });
 
@@ -141,7 +141,7 @@ await client.workspaces.stop(ws.id, { force: true });
 await client.workspaces.start(ws.id, {
   timeout: { seconds: 7200, action: 'stop' },
 });
-await client.workspaces.wait(ws.id, { status: 'running', timeoutSeconds: 120 });
+await client.workspaces.wait(ws.id, { status: 'available', timeoutSeconds: 120 });
 ```
 
 ## Update Timeout Policy

@@ -53,7 +53,7 @@ from kibotos import (
 
 with Kibotos() as client:
     try:
-        ws = client.workspaces.wait("wks_01j9...", status="running", timeout=60)
+        ws = client.workspaces.wait("wks_01j9...", status="available", timeout=60)
     except AuthenticationError as err:
         print("Invalid API key:", err.request_id)
     except PermissionDeniedError as err:

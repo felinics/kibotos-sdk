@@ -35,7 +35,7 @@ Set `KIBOTOS_API_KEY` in your environment (or pass `apiKey` to `new Kibotos(...)
 export KIBOTOS_API_KEY="kb_..."
 ```
 
-Then create a workspace, wait until it is running, expose a port over HTTPS, and clean up:
+Then create a workspace, wait until it is available, expose a port over HTTPS, and clean up:
 
 ```ts
 import { Kibotos } from '@kibotos/sdk';
@@ -51,9 +51,9 @@ const created = await client.workspaces.create({
   labels: { env: 'dev' },
 });
 
-// 2. Wait until the workspace reaches running (auto-chunks timeouts > 60s)
+// 2. Wait until the workspace reaches available (auto-chunks timeouts > 60s)
 const workspace = await client.workspaces.wait(created.id, {
-  status: ['running', 'failed'],
+  status: ['available', 'failed'],
   timeoutSeconds: 120,
 });
 console.log('Workspace ready:', workspace.id, workspace.status);

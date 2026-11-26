@@ -46,7 +46,7 @@ def main() -> int:
 
         workspace_id: str | None = None
         try:
-            # 3. Create a workspace attached to the volume and wait until running.
+            # 3. Create a workspace attached to the volume and wait until available.
             workspace = client.workspaces.create(
                 template=template_id,
                 name="quickstart-workspace",
@@ -62,10 +62,10 @@ def main() -> int:
             workspace_id = workspace.id
             workspace = client.workspaces.wait(
                 workspace.id,
-                status=["running", "failed"],
+                status=["available", "failed"],
                 timeout=120,
             )
-            print(f"Workspace running: {workspace.id} in zone {workspace.zone}")
+            print(f"Workspace available: {workspace.id} in zone {workspace.zone}")
 
             # 4. Expose port 8080 over HTTPS.
             exposure = client.exposures.create(workspace.id, port=8080, ttl_seconds=1800)

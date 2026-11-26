@@ -35,7 +35,7 @@ All helpers work cleanly with wrapped errors via `errors.As`:
 
 ```go
 ws, err := client.Workspaces.Wait(ctx, "wks_01j9...", kibotos.WaitWorkspaceParams{
-	Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusRunning},
+	Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable},
 	Timeout:  time.Minute,
 })
 if err != nil {
@@ -47,7 +47,7 @@ if err != nil {
 	case kibotos.IsUnexpectedStatus(err):
 		log.Printf("workspace entered an unexpected status: %v", err)
 	case kibotos.IsWaitTimeout(err):
-		log.Printf("timed out waiting for running: %v", err)
+		log.Printf("timed out waiting for available: %v", err)
 	case kibotos.IsRateLimited(err):
 		log.Printf("rate limited after retries: %v", err)
 	default:

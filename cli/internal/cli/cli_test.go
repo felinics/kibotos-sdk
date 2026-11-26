@@ -341,7 +341,7 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces/wks_123/wait":
 			statuses := r.URL.Query()["status"]
-			target := kibotos.WorkspaceStatusRunning
+			target := kibotos.WorkspaceStatusAvailable
 			if len(statuses) > 0 {
 				target = kibotos.WorkspaceStatus(statuses[0])
 			}
@@ -352,7 +352,7 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 				t.Errorf("expected label.env=test, got %q", got)
 			}
 			writeJSON(w, http.StatusOK, kibotos.MultiZonePage[kibotos.Workspace]{
-				Data:             []kibotos.Workspace{makeWS(kibotos.WorkspaceStatusRunning, kibotos.NetworkModePublicInternet, true)},
+				Data:             []kibotos.Workspace{makeWS(kibotos.WorkspaceStatusAvailable, kibotos.NetworkModePublicInternet, true)},
 				UnavailableZones: []string{},
 			})
 
@@ -367,10 +367,10 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 			}
 			if netPolls.Load() > 0 {
 				applied := netPolls.Add(1) >= 3
-				writeJSON(w, http.StatusOK, makeWS(kibotos.WorkspaceStatusRunning, kibotos.NetworkModeDenyAll, applied))
+				writeJSON(w, http.StatusOK, makeWS(kibotos.WorkspaceStatusAvailable, kibotos.NetworkModeDenyAll, applied))
 				return
 			}
-			writeJSON(w, http.StatusOK, makeWS(kibotos.WorkspaceStatusRunning, kibotos.NetworkModePublicInternet, true))
+			writeJSON(w, http.StatusOK, makeWS(kibotos.WorkspaceStatusAvailable, kibotos.NetworkModePublicInternet, true))
 
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/workspaces/wks_123":
 			var raw map[string]any
@@ -378,7 +378,7 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 			if _, hasName := raw["name"]; !hasName || raw["name"] != nil {
 				t.Errorf("expected explicit name:null for --clear-name, got %+v", raw)
 			}
-			ws := makeWS(kibotos.WorkspaceStatusRunning, kibotos.NetworkModePublicInternet, true)
+			ws := makeWS(kibotos.WorkspaceStatusAvailable, kibotos.NetworkModePublicInternet, true)
 			ws.Name = ""
 			writeJSON(w, http.StatusOK, ws)
 
@@ -389,11 +389,11 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 			writeJSON(w, http.StatusAccepted, makeWS(kibotos.WorkspaceStatusStarting, kibotos.NetworkModePublicInternet, true))
 
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workspaces/wks_123/timeout":
-			writeJSON(w, http.StatusOK, makeWS(kibotos.WorkspaceStatusRunning, kibotos.NetworkModePublicInternet, true))
+			writeJSON(w, http.StatusOK, makeWS(kibotos.WorkspaceStatusAvailable, kibotos.NetworkModePublicInternet, true))
 
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/workspaces/wks_123/network":
 			netPolls.Store(1)
-			writeJSON(w, http.StatusAccepted, makeWS(kibotos.WorkspaceStatusRunning, kibotos.NetworkModeDenyAll, false))
+			writeJSON(w, http.StatusAccepted, makeWS(kibotos.WorkspaceStatusAvailable, kibotos.NetworkModeDenyAll, false))
 
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/workspaces/wks_123/volume":
 			writeJSON(w, http.StatusOK, makeWS(kibotos.WorkspaceStatusStopped, kibotos.NetworkModePublicInternet, true))
@@ -448,8 +448,8 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &created); err != nil {
 		t.Fatalf("stdout must be pure valid JSON: %v\nstdout=%s", err, stdout)
 	}
-	if created.Status != kibotos.WorkspaceStatusRunning {
-		t.Fatalf("expected running after --wait, got %q", created.Status)
+	if created.Status != kibotos.WorkspaceStatusAvailable {
+		t.Fatalf("expected available after --wait, got %q", created.Status)
 	}
 
 	// List using alias `ws`.
@@ -482,7 +482,7 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 
 	// Start --timeout 3600 --timeout-action stop --wait.
 	code, stdout, stderr = h.run("ws", "start", "wks_123", "--timeout", "3600", "--timeout-action", "stop", "--wait", "--json")
-	if code != ExitOK || !strings.Contains(stdout, `"status": "running"`) {
+	if code != ExitOK || !strings.Contains(stdout, `"status": "available"`) {
 		t.Fatalf("ws start exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 
@@ -510,8 +510,8 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 	}
 
 	// Wait command with comma-separated statuses.
-	code, stdout, stderr = h.run("ws", "wait", "wks_123", "--status", "running,failed", "--timeout", "10", "--json")
-	if code != ExitOK || !strings.Contains(stdout, `"status": "running"`) {
+	code, stdout, stderr = h.run("ws", "wait", "wks_123", "--status", "available,failed", "--timeout", "10", "--json")
+	if code != ExitOK || !strings.Contains(stdout, `"status": "available"`) {
 		t.Fatalf("ws wait exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 
@@ -559,7 +559,8 @@ func TestVolumeExposureTemplateZoneAndVersionCommands(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/zones":
 			writeJSON(w, http.StatusOK, kibotos.Page[kibotos.Zone]{
 				Data: []kibotos.Zone{
-					{ID: "global-1", DisplayName: "Global 1", Region: "global", Status: kibotos.ZoneStatusAvailable, Default: true},
+					{ID: "global-1", DisplayName: "Global 1", Region: "global", Country: kibotos.Ptr("JP"), Status: kibotos.ZoneStatusAvailable, Default: true},
+					{ID: "eu-1", DisplayName: "EU 1", Region: "eu", Country: nil, Status: kibotos.ZoneStatusDraining, Default: false},
 				},
 			})
 
@@ -647,9 +648,12 @@ func TestVolumeExposureTemplateZoneAndVersionCommands(t *testing.T) {
 	h.env["KIBOTOS_API_KEY"] = "kb_test_key_5678"
 	h.env["KIBOTOS_API_URL"] = srv.URL
 
-	// Zone list
-	if code, out, errOut := h.run("zone", "list"); code != ExitOK || !strings.Contains(out, "global-1") {
+	// Zone list (table with COUNTRY column and JSON with country field)
+	if code, out, errOut := h.run("zone", "list"); code != ExitOK || !strings.Contains(out, "COUNTRY") || !strings.Contains(out, "JP") || !strings.Contains(out, "global-1") || !strings.Contains(out, "eu-1") {
 		t.Fatalf("zone list failed: code=%d out=%q err=%q", code, out, errOut)
+	}
+	if code, out, errOut := h.run("zone", "list", "--json"); code != ExitOK || !strings.Contains(out, `"country": "JP"`) || !strings.Contains(out, `"country": null`) {
+		t.Fatalf("zone list --json failed: code=%d out=%q err=%q", code, out, errOut)
 	}
 
 	// Templates

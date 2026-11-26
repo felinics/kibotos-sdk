@@ -8,6 +8,7 @@ from typing import Any
 def make_zone(
     zone_id: str = "global-1",
     *,
+    country: str | None = "JP",
     default: bool = True,
     status: str = "available",
     extra: dict[str, Any] | None = None,
@@ -16,6 +17,7 @@ def make_zone(
         "id": zone_id,
         "display_name": f"Zone {zone_id}",
         "region": "global",
+        "country": country,
         "status": status,
         "default": default,
     }
@@ -70,7 +72,7 @@ def make_workspace(
     workspace_id: str = "wks_01",
     *,
     name: str | None = "agent-runner",
-    status: str = "running",
+    status: str = "available",
     zone: str = "global-1",
     network_mode: str = "public_internet",
     volume: dict[str, Any] | None = None,

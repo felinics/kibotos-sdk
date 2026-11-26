@@ -58,8 +58,9 @@ Key error codes:
 - `GET /v1/zones?limit=&page_token=` -> `200` `{ data: Zone[], next_page_token: string | null }`
 - `Zone`:
   ```json
-  { "id": "global-1", "display_name": "Global 1", "region": "global", "status": "available", "default": true }
+  { "id": "global-1", "display_name": "Global 1", "region": "global", "country": "JP", "status": "available", "default": true }
   ```
+  - `country`: ISO 3166-1 alpha-2 two-letter uppercase country/region code (e.g. `"JP"`, `"US"`), or `null` when unspecified
   - `status`: `"available" | "draining"`
 
 ### Templates (Platform read-only in v1 initial; organization templates reserved)
@@ -126,12 +127,12 @@ Key error codes:
   - Optional body: `{ "force": false }`
 - `POST /v1/workspaces/{id}/timeout` -> `200` `Workspace`
   - Body: `{ "seconds": 3600, "action": "stop" }`
-- `PUT /v1/workspaces/{id}/network` -> `200` (when stopped) or `202` (when running) `Workspace`
+- `PUT /v1/workspaces/{id}/network` -> `200` (when stopped) or `202` (when available) `Workspace`
   - Body: `{ "mode": "public_internet" | "deny_all" }`
 - `PUT /v1/workspaces/{id}/volume` -> `200` `Workspace`
   - Body: `{ "id": "vol_...", "mount_path": "/data", "delete_with_workspace": false }`
 - `DELETE /v1/workspaces/{id}/volume` -> `200` `Workspace`
-- `GET /v1/workspaces/{id}/wait?status=running&status=failed&timeout=30` -> `200` `Workspace`
+- `GET /v1/workspaces/{id}/wait?status=available&status=failed&timeout=30` -> `200` `Workspace`
   - `status` repeatable, required; `timeout` default `30`, max `60`.
 - `Workspace`:
   ```json
@@ -140,7 +141,7 @@ Key error codes:
     "name": "agent-runner",
     "zone": "global-1",
     "template": { "id": "python-3.12", "revision": "r42" },
-    "status": "running",
+    "status": "available",
     "failure": null,
     "resources": { "vcpus": 2, "memory_mib": 4096, "disk_mib": 20480 },
     "network": { "mode": "public_internet", "applied": true },
@@ -151,7 +152,7 @@ Key error codes:
     "updated_at": "2026-11-21T12:00:05Z"
   }
   ```
-  - `status`: `"creating" | "running" | "stopping" | "stopped" | "starting" | "deleting" | "failed" | "unknown"`
+  - `status`: `"creating" | "available" | "stopping" | "stopped" | "starting" | "deleting" | "failed" | "unknown"`
   - `failure`: `{ "code": string, "message": string, "retryable": boolean } | null`
 
 ### Exposures
@@ -201,7 +202,7 @@ Key error codes:
     "updated_at": "2026-11-21T12:00:00Z"
   }
   ```
-  - `status`: `"creating" | "available" | "attached" | "resizing" | "deleting" | "failed" | "unknown"`
+  - `status`: `"creating" | "available" | "attached" | "resizing" | "deleting" | "failed" | "lost" | "unknown"` (native Kibotos 1:1 semantics: `workspace_id` expresses binding; `attached` means mounted to a running workspace; `lost` means storage pool lost)
 
 ---
 

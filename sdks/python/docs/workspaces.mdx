@@ -47,13 +47,13 @@ Long-polls `GET /v1/workspaces/{id}/wait` until the workspace reaches one of the
 
 ```python
 # Synchronous
-ws = client.workspaces.wait(created.id, status=["running", "failed"], timeout=180.0)
+ws = client.workspaces.wait(created.id, status=["available", "failed"], timeout=180.0)
 
 # Asynchronous
-ws = await async_client.workspaces.wait(created.id, status="running", timeout=180.0)
+ws = await async_client.workspaces.wait(created.id, status="available", timeout=180.0)
 ```
 
-- `status`: A single status string or a sequence of strings (`"creating"`, `"running"`, `"stopping"`, `"stopped"`, `"starting"`, `"deleting"`, `"failed"`, `"unknown"`).
+- `status`: A single status string or a sequence of strings (`"creating"`, `"available"`, `"stopping"`, `"stopped"`, `"starting"`, `"deleting"`, `"failed"`, `"unknown"`).
 - `timeout`: Total wait budget in seconds (`float`, default `30.0`). Raises `ValueError` if non-positive.
 - Raises `WaitTimeoutError` (`408`) if the budget expires, or `UnexpectedStatusError` (`409`) if the workspace enters an unexpected terminal state.
 
@@ -65,7 +65,7 @@ Returns a `WorkspacePage` (`data: list[Workspace]`, `unavailable_zones: list[str
 
 ```python
 page = client.workspaces.list(
-    status="running",
+    status="available",
     zone="global-1",
     labels={"team": "ml"},
     limit=20,
@@ -80,11 +80,11 @@ Yields every matching `Workspace` across all pages:
 
 ```python
 # Sync
-for ws in client.workspaces.iterate(status="running", labels={"team": "ml"}, limit=50):
+for ws in client.workspaces.iterate(status="available", labels={"team": "ml"}, limit=50):
     print(ws.id, ws.name)
 
 # Async
-async for ws in async_client.workspaces.iterate(status="running"):
+async for ws in async_client.workspaces.iterate(status="available"):
     print(ws.id, ws.name)
 ```
 
@@ -131,7 +131,7 @@ client.workspaces.start(
     ws.id,
     timeout=WorkspaceTimeoutSpec(seconds=7200, action="stop"),
 )
-client.workspaces.wait(ws.id, status="running", timeout=120)
+client.workspaces.wait(ws.id, status="available", timeout=120)
 ```
 
 ## Update Timeout Policy

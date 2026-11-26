@@ -13,17 +13,18 @@ import (
 )
 
 // WorkspaceStatus represents the lifecycle state of a workspace.
+// Values map 1:1 to native Kibotos WorkspaceState in lowercase.
 type WorkspaceStatus string
 
 const (
-	WorkspaceStatusCreating WorkspaceStatus = "creating"
-	WorkspaceStatusRunning  WorkspaceStatus = "running"
-	WorkspaceStatusStopping WorkspaceStatus = "stopping"
-	WorkspaceStatusStopped  WorkspaceStatus = "stopped"
-	WorkspaceStatusStarting WorkspaceStatus = "starting"
-	WorkspaceStatusDeleting WorkspaceStatus = "deleting"
-	WorkspaceStatusFailed   WorkspaceStatus = "failed"
-	WorkspaceStatusUnknown  WorkspaceStatus = "unknown"
+	WorkspaceStatusCreating  WorkspaceStatus = "creating"
+	WorkspaceStatusAvailable WorkspaceStatus = "available"
+	WorkspaceStatusStopping  WorkspaceStatus = "stopping"
+	WorkspaceStatusStopped   WorkspaceStatus = "stopped"
+	WorkspaceStatusStarting  WorkspaceStatus = "starting"
+	WorkspaceStatusDeleting  WorkspaceStatus = "deleting"
+	WorkspaceStatusFailed    WorkspaceStatus = "failed"
+	WorkspaceStatusUnknown   WorkspaceStatus = "unknown"
 )
 
 // NetworkMode represents a workspace's outbound network policy.
@@ -322,7 +323,7 @@ func (s *WorkspacesService) Start(ctx context.Context, id string, params *StartW
 	return &ws, nil
 }
 
-// Stop stops a running workspace (POST /v1/workspaces/{id}/stop).
+// Stop stops an available workspace (POST /v1/workspaces/{id}/stop).
 func (s *WorkspacesService) Stop(ctx context.Context, id string, params *StopWorkspaceParams, opts ...RequestOption) (*Workspace, error) {
 	if id == "" {
 		return nil, errors.New("kibotos: workspace id is required")

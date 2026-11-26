@@ -24,7 +24,7 @@ Set `KIBOTOS_API_KEY` in your environment:
 export KIBOTOS_API_KEY="kb_..."
 ```
 
-Then create a workspace, wait until it is running, expose a port over HTTPS, and clean up:
+Then create a workspace, wait until it is available, expose a port over HTTPS, and clean up:
 
 ```go
 package main
@@ -65,10 +65,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 2. Wait until running (auto-chunks timeouts > 60s)
+	// 2. Wait until available (auto-chunks timeouts > 60s)
 	ws, err = client.Workspaces.Wait(ctx, ws.ID, kibotos.WaitWorkspaceParams{
 		Statuses: []kibotos.WorkspaceStatus{
-			kibotos.WorkspaceStatusRunning,
+			kibotos.WorkspaceStatusAvailable,
 			kibotos.WorkspaceStatusFailed,
 		},
 		Timeout: 3 * time.Minute,

@@ -293,10 +293,10 @@ func (a *App) newVolumeResizeCmd() *cobra.Command {
 				return err
 			}
 
-			if wait && vol.Status != kibotos.VolumeStatusAvailable && vol.Status != kibotos.VolumeStatusAttached {
+			if wait && vol.Status != kibotos.VolumeStatusAvailable {
 				a.printer().Statusf("Waiting for volume %s resize to complete...", vol.ID)
 				vol, err = client.Volumes.Wait(ctx, vol.ID, kibotos.WaitVolumeParams{
-					Statuses: []kibotos.VolumeStatus{kibotos.VolumeStatusAvailable, kibotos.VolumeStatusAttached},
+					Statuses: []kibotos.VolumeStatus{kibotos.VolumeStatusAvailable},
 					Timeout:  time.Duration(waitTimeout) * time.Second,
 				})
 				if err != nil {

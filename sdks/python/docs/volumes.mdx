@@ -76,13 +76,13 @@ vol = client.volumes.update(vol.id, name=None)
 
 `client.volumes.resize(volume_id, *, size_gib, idempotency_key=None) -> Volume`
 
-Grows an existing volume asynchronously (`POST /v1/volumes/{id}/resize`, HTTP `202 Accepted`):
+Grows an existing `"available"` volume asynchronously (`POST /v1/volumes/{id}/resize`, HTTP `202 Accepted`; volumes bound to a stopped/failed workspace remain `"available"` and can be resized):
 
 ```python
 client.volumes.resize(vol.id, size_gib=100)
 vol = client.volumes.wait(
     vol.id,
-    status=["available", "attached", "failed"],
+    status=["available", "failed"],
     timeout=180,
 )
 print("New size:", vol.size_gib, "GiB")
@@ -92,7 +92,7 @@ print("New size:", vol.size_gib, "GiB")
 
 `client.volumes.delete(volume_id) -> Volume`
 
-Deletes an unattached volume asynchronously (`DELETE /v1/volumes/{id}`, HTTP `202 Accepted`). Attempting to delete an attached volume raises `ConflictError` (`volume_attached`).
+Deletes an unbound volume (`workspace_id is None`) asynchronously (`DELETE /v1/volumes/{id}`, HTTP `202 Accepted`). Attempting to delete a bound volume raises `ConflictError` (`volume_attached`).
 
 ```python
 deleting = client.volumes.delete(vol.id)
@@ -103,7 +103,7 @@ print(deleting.status)  # "deleting"
 
 `client.volumes.wait(volume_id, *, status, timeout=30.0) -> Volume`
 
-Valid `VolumeStatus` values: `"creating"`, `"available"`, `"attached"`, `"resizing"`, `"deleting"`, `"failed"`, `"unknown"`. Timeouts exceeding `60` seconds automatically loop across `<= 60s` server wait windows.
+Valid `VolumeStatus` values: `"creating"`, `"available"`, `"attached"`, `"resizing"`, `"deleting"`, `"failed"`, `"lost"`, `"unknown"`. Volume statuses follow native Kibotos 1:1 semantics: `workspace_id` expresses workspace binding; `"available"` means ready and not currently mounted to a running workspace (including volumes bound to a stopped/failed workspace); `"attached"` means mounted to a running workspace; `"lost"` means the underlying storage pool was lost and data is unrecoverable. Timeouts exceeding `60` seconds automatically loop across `<= 60s` server wait windows.
 
 ```python
 ready = client.volumes.wait("vol_01j9...", status=["available", "failed"], timeout=90.0)

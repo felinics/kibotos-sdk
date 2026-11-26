@@ -37,7 +37,7 @@ kibo workspace create \
 | `--timeout <sec>` | No | — | Auto-timeout duration in seconds. |
 | `--timeout-action <action>` | No | — | Action on timeout expiration: `stop` or `delete` (requires `--timeout`). |
 | `--label <key=value>` | No | — | Workspace label (repeatable). |
-| `--wait` | No | `false` | Block until workspace status reaches `running`. |
+| `--wait` | No | `false` | Block until workspace status reaches `available`. |
 | `--wait-timeout <sec>` | No | `300` | Maximum seconds to wait when `--wait` is set. |
 
 ## List and Inspect Workspaces
@@ -45,8 +45,8 @@ kibo workspace create \
 When neither `--limit` nor `--page-token` is provided, `kibo workspace list` automatically collects all pages across zones:
 
 ```bash
-# List all running workspaces matching labels
-kibo ws list --status running --zone global-1 --label team=ml
+# List all available workspaces matching labels
+kibo ws list --status available --zone global-1 --label team=ml
 
 # Fetch a single page in JSON
 kibo ws list --limit 20 --page-token <token> --json
@@ -55,7 +55,7 @@ kibo ws list --limit 20 --page-token <token> --json
 kibo ws get wks_01j9...
 ```
 
-Valid `--status` values: `creating`, `running`, `stopping`, `stopped`, `starting`, `deleting`, `failed`, `unknown`.
+Valid `--status` values: `creating`, `available`, `stopping`, `stopped`, `starting`, `deleting`, `failed`, `unknown`.
 
 ## Update Name and Labels
 
@@ -129,5 +129,5 @@ kibo ws volume detach wks_01j9...
 Block until a workspace reaches any of the given statuses (`--status` accepts comma-separated values or repeated flags; `--timeout` defaults to `30` seconds and auto-chunks waits longer than `60` seconds):
 
 ```bash
-kibo ws wait wks_01j9... --status running,failed --timeout 180 --json
+kibo ws wait wks_01j9... --status available,failed --timeout 180 --json
 ```
