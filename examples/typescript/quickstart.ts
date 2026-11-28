@@ -5,7 +5,7 @@
  *   export KIBOTOS_API_KEY="kb_..."
  *   npx tsx examples/typescript/quickstart.ts
  */
-import { Kibotos, UnexpectedStatusError, WaitTimeoutError } from '../../sdks/typescript/src/index.js';
+import { Kibotos, UnexpectedStatusError, WaitTimeoutError } from '../../sdks/typescript/src/index';
 
 async function main(): Promise<void> {
   const client = new Kibotos();

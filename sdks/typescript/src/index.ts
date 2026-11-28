@@ -1,4 +1,4 @@
-export { Kibotos } from './client.js';
+export { Kibotos } from './client';
 export {
   APIConnectionError,
   AuthenticationError,
@@ -11,15 +11,15 @@ export {
   UnexpectedStatusError,
   WaitTimeoutError,
   type KibotosAPIErrorInit,
-} from './errors.js';
-export { DEFAULT_BASE_URL, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS, SDK_VERSION } from './http.js';
+} from './errors';
+export { DEFAULT_BASE_URL, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_MS, SDK_VERSION } from './http';
 export {
   ExposuresResource,
   TemplatesResource,
   VolumesResource,
   WorkspacesResource,
   ZonesResource,
-} from './resources/index.js';
+} from './resources/index';
 export type {
   APIErrorBody,
   AttachVolumeRequest,
@@ -72,4 +72,4 @@ export type {
   WorkspaceVolumeAttachmentInput,
   Zone,
   ZoneStatus,
-} from './types.js';
+} from './types';

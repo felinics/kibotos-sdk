@@ -1,5 +1,5 @@
-import type { HttpClient } from '../http.js';
-import { buildQueryParams, paginate } from '../pagination.js';
+import type { HttpClient } from '../http';
+import { buildQueryParams, paginate } from '../pagination';
 import type {
   CreateVolumeRequest,
   ListVolumesParams,
@@ -10,8 +10,8 @@ import type {
   Volume,
   VolumeStatus,
   WaitVolumeParams,
-} from '../types.js';
-import { executeWaitLoop } from '../wait.js';
+} from '../types';
+import { executeWaitLoop } from '../wait';
 
 export class VolumesResource {
   constructor(private readonly http: HttpClient) {}

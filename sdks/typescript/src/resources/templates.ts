@@ -1,5 +1,5 @@
-import type { HttpClient } from '../http.js';
-import { buildQueryParams, paginate } from '../pagination.js';
+import type { HttpClient } from '../http';
+import { buildQueryParams, paginate } from '../pagination';
 import type {
   ListTemplateRevisionsParams,
   ListTemplatesParams,
@@ -8,7 +8,7 @@ import type {
   RequestOptions,
   Template,
   TemplateRevision,
-} from '../types.js';
+} from '../types';
 
 export class TemplatesResource {
   constructor(private readonly http: HttpClient) {}

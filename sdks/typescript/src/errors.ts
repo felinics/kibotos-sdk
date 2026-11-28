@@ -1,4 +1,4 @@
-import type { ErrorEnvelope } from './types.js';
+import type { ErrorEnvelope } from './types';
 
 export interface KibotosAPIErrorInit {
   status: number;

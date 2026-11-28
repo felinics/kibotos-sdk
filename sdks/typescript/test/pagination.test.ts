@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Kibotos } from '../src/index.js';
+import { Kibotos } from '../src/index';
 import {
   createMockFetch,
   jsonResponse,
@@ -8,7 +8,7 @@ import {
   sampleVolume,
   sampleWorkspace,
   sampleZone,
-} from './helpers.js';
+} from './helpers';
 
 describe('AsyncIterable auto-pagination (iterate)', () => {
   it('iterates seamlessly across multiple pages for workspaces and preserves filters', async () => {

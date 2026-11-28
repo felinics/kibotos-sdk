@@ -1,12 +1,12 @@
-import type { HttpClient } from '../http.js';
-import { buildQueryParams, paginate } from '../pagination.js';
+import type { HttpClient } from '../http';
+import { buildQueryParams, paginate } from '../pagination';
 import type {
   CreateExposureRequest,
   Exposure,
   ListExposuresParams,
   Page,
   RequestOptions,
-} from '../types.js';
+} from '../types';
 
 export class ExposuresResource {
   constructor(private readonly http: HttpClient) {}

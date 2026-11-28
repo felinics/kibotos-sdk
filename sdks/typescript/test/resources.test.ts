@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Kibotos } from '../src/index.js';
+import { Kibotos } from '../src/index';
 import {
   createMockFetch,
   jsonResponse,
@@ -9,7 +9,7 @@ import {
   sampleVolume,
   sampleWorkspace,
   sampleZone,
-} from './helpers.js';
+} from './helpers';
 
 describe('Resource namespaces', () => {
   it('zones.list calls GET /v1/zones with pagination params', async () => {

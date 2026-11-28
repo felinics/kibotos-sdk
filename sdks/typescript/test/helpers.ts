@@ -1,4 +1,4 @@
-import type { Exposure, Template, TemplateRevision, Volume, Workspace, Zone } from '../src/types.js';
+import type { Exposure, Template, TemplateRevision, Volume, Workspace, Zone } from '../src/types';
 
 export interface RecordedRequest {
   url: string;

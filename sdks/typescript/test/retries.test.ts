@@ -5,9 +5,9 @@ import {
   Kibotos,
   NotFoundError,
   RateLimitError,
-} from '../src/index.js';
-import { parseRetryAfterMs } from '../src/errors.js';
-import { createMockFetch, errorResponse, jsonResponse, sampleWorkspace } from './helpers.js';
+} from '../src/index';
+import { parseRetryAfterMs } from '../src/errors';
+import { createMockFetch, errorResponse, jsonResponse, sampleWorkspace } from './helpers';
 
 describe('Retries, Retry-After, Idempotency-Key reuse, and AbortSignal', () => {
   afterEach(() => {

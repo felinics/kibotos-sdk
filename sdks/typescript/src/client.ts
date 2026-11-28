@@ -1,12 +1,12 @@
-import { HttpClient } from './http.js';
+import { HttpClient } from './http';
 import {
   ExposuresResource,
   TemplatesResource,
   VolumesResource,
   WorkspacesResource,
   ZonesResource,
-} from './resources/index.js';
-import type { KibotosClientOptions } from './types.js';
+} from './resources/index';
+import type { KibotosClientOptions } from './types';
 
 /**
  * Official Kibotos v1 API client.

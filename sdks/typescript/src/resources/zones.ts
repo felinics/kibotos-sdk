@@ -1,6 +1,6 @@
-import type { HttpClient } from '../http.js';
-import { buildQueryParams, paginate } from '../pagination.js';
-import type { ListZonesParams, Page, RequestOptions, Zone } from '../types.js';
+import type { HttpClient } from '../http';
+import { buildQueryParams, paginate } from '../pagination';
+import type { ListZonesParams, Page, RequestOptions, Zone } from '../types';
 
 export class ZonesResource {
   constructor(private readonly http: HttpClient) {}

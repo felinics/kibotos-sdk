@@ -1,5 +1,5 @@
-import type { HttpClient } from '../http.js';
-import { buildQueryParams, paginate } from '../pagination.js';
+import type { HttpClient } from '../http';
+import { buildQueryParams, paginate } from '../pagination';
 import type {
   AttachVolumeRequest,
   CreateWorkspaceRequest,
@@ -14,8 +14,8 @@ import type {
   WaitWorkspaceParams,
   Workspace,
   WorkspaceStatus,
-} from '../types.js';
-import { executeWaitLoop } from '../wait.js';
+} from '../types';
+import { executeWaitLoop } from '../wait';
 
 export class WorkspacesResource {
   constructor(private readonly http: HttpClient) {}

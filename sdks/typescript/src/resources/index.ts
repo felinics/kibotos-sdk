@@ -1,5 +1,5 @@
-export { ExposuresResource } from './exposures.js';
-export { TemplatesResource } from './templates.js';
-export { VolumesResource } from './volumes.js';
-export { WorkspacesResource } from './workspaces.js';
-export { ZonesResource } from './zones.js';
+export { ExposuresResource } from './exposures';
+export { TemplatesResource } from './templates';
+export { VolumesResource } from './volumes';
+export { WorkspacesResource } from './workspaces';
+export { ZonesResource } from './zones';

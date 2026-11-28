@@ -11,9 +11,9 @@ import {
   RateLimitError,
   UnexpectedStatusError,
   WaitTimeoutError,
-} from '../src/index.js';
-import { normalizeBaseUrl } from '../src/http.js';
-import { createMockFetch, errorResponse, jsonResponse, sampleZone } from './helpers.js';
+} from '../src/index';
+import { normalizeBaseUrl } from '../src/http';
+import { createMockFetch, errorResponse, jsonResponse, sampleZone } from './helpers';
 
 describe('Kibotos client configuration & error mapping', () => {
   const originalApiKey = process.env.KIBOTOS_API_KEY;

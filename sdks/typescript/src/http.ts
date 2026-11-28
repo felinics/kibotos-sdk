@@ -4,8 +4,8 @@ import {
   RateLimitError,
   createAPIError,
   parseRetryAfterMs,
-} from './errors.js';
-import type { KibotosClientOptions, RequestOptions } from './types.js';
+} from './errors';
+import type { KibotosClientOptions, RequestOptions } from './types';
 
 export const DEFAULT_BASE_URL = 'https://api.kibo.to/v1';
 export const DEFAULT_MAX_RETRIES = 3;

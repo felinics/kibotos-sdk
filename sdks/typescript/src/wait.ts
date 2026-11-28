@@ -1,6 +1,6 @@
-import { KibotosError, WaitTimeoutError } from './errors.js';
-import type { HttpClient } from './http.js';
-import type { RequestOptions } from './types.js';
+import { KibotosError, WaitTimeoutError } from './errors';
+import type { HttpClient } from './http';
+import type { RequestOptions } from './types';
 
 const DEFAULT_WAIT_TIMEOUT_SECONDS = 30;
 const MAX_CHUNK_TIMEOUT_SECONDS = 60;

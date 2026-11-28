@@ -1,4 +1,4 @@
-import type { Page } from './types.js';
+import type { Page } from './types';
 
 /**
  * Lazily iterates over every item across all pages returned by a paginated Kibotos endpoint.

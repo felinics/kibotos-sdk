@@ -4,14 +4,14 @@ import {
   KibotosError,
   UnexpectedStatusError,
   WaitTimeoutError,
-} from '../src/index.js';
+} from '../src/index';
 import {
   createMockFetch,
   errorResponse,
   jsonResponse,
   sampleVolume,
   sampleWorkspace,
-} from './helpers.js';
+} from './helpers';
 
 describe('workspaces.wait() and volumes.wait()', () => {
   it('sends repeatable status query params and default 30s timeout', async () => {
