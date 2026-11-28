@@ -32,7 +32,7 @@ printf 'hello' | kibo exec wks_123 --no-input --json --stdin - -- cat
 kibo exec wks_123 --no-input --json --stream --timeout 900 -- python3 -u main.py
 ```
 
-The default synchronous timeout is 30 seconds. Timeouts over 600 seconds require streaming or a PTY. JSON streaming emits one event per line. `exec` forwards the remote exit status, reports timeouts as `124`, and reports signals as `128 + signal`.
+The default synchronous timeout is 30 seconds. Timeouts over 600 seconds require `--stream` or `-it`. `--stdin` takes literal text, or `-` to read up to 3 MiB from local stdin. `--stream --json` emits one event per line as an object with `type` and `data`. `-it` cannot be combined with `--stream`, `--stdin`, or `--json`. `exec` forwards the remote exit status, reports timeouts as `124`, and reports signals as `128 + signal`.
 
 ## Browse and transfer files
 

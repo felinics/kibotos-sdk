@@ -32,7 +32,7 @@ kibo workspace create \
 | `--vcpus <n>` | No | template default | vCPU count override. |
 | `--memory <size>` | No | template default | Memory allocation (`4Gi`, `4096`; bare integer is MiB). |
 | `--disk <size>` | No | template default | Root disk size (`20Gi`, `20480`; bare integer is MiB). |
-| `--network <mode>` | No | `public_internet` | Outbound network mode: `public_internet` or `deny_all`. |
+| `--network <mode>` | No | API default | Outbound network mode: `public_internet` or `deny_all`. Add allow, deny, egress, and resolver rules after creation with [`kibo ws network`](packs-and-networking#referencing-networking-resources). |
 | `--volume <vol_id:/path>` | No | — | Repeat for multiple bindings. A single legacy volume ID or name can be paired with `--mount-path`. |
 | `--pack <pack_id>` | No | — | Bind a Pack. Repeat for up to four unique IDs. |
 | `--desktop` | No | `false` | Attach a Pack that provides `desktop.v1` and show the Desktop URL in human output. The Pack counts toward the four-Pack limit. |
@@ -57,7 +57,7 @@ kibo ws desktop wks_123 --start --restart --no-input --json
 kibo desktop wks_123 --no-input -q
 ```
 
-`kibo desktop` and `kibo ws desktop` attach a Pack that provides `desktop.v1` when the workspace needs one. The Pack takes effect on the next start. In a terminal, the command offers to start a stopped workspace or restart an available workspace that needs the Pack. In automation, use `--start` for a stopped workspace and `--restart` to activate a newly attached Pack on a running workspace. If you defer a restart, stop and start the workspace when ready.
+`kibo desktop` and `kibo ws desktop` attach a Pack that provides `desktop.v1` when the workspace needs one. The Pack takes effect on the next start. In a terminal, the command offers to start a stopped workspace or restart an available workspace that needs the Pack. In automation, use `--start` for a stopped workspace and `--restart` to activate a newly attached Pack on a running workspace. In a terminal, `-y` accepts either prompt. If you defer a restart, stop and start the workspace when ready.
 
 Desktop waits for a requested start or restart to reach `available` by default. Use `--wait-timeout` to set the wait limit. With `--no-wait`, a restart still waits for the stop before sending the start request. `--open` launches the browser once the command has an available workspace and any required restart has been performed.
 
@@ -143,7 +143,14 @@ kibo ws network agent-sandbox --mode deny_all
 kibo ws network agent-sandbox --mode public_internet
 ```
 
-The `--mode` command replaces the policy. Use the network subcommands to edit individual rules. [Packs and networking](packs-and-networking)
+The `--mode` form replaces the whole policy. Combine it with repeatable `--allow` and `--deny` (an IP address or CIDR each), one `--egress egress_id=IP_OR_CIDR[,IP_OR_CIDR...]`, one `--resolver resolver_id[=egress_id]`, and `--drain-seconds` (`0`–`3600`). `deny_all` requires all four rule lists to be empty.
+
+```bash
+kibo ws network agent-sandbox --mode public_internet \
+  --deny 10.0.0.0/8 --allow 10.1.2.3 --drain-seconds 60 --no-input --json
+```
+
+To edit one rule and keep the rest, use `kibo ws network allow`, `deny`, `use-egress`, and `use-resolver`. [Packs and networking](packs-and-networking#edit-one-workspace-network-rule)
 
 ## Attach and detach persistent volumes
 
@@ -156,6 +163,8 @@ kibo ws volume attach wks_123 vol_123 --mount /data --restart --no-input --json
 kibo ws volume detach wks_123 vol_123 --no-input --json
 kibo ws volumes set wks_123 vol_123:/data vol_456:/cache --no-input --json
 ```
+
+`attach` flags: `--mount` (absolute path, used with the positional volume), `--delete-with-workspace` to delete the volume along with the workspace, `--restart` to authorize the stop-and-start on a running workspace, and `--wait-timeout` for each transition (default `5m`). The legacy flag form `--volume` plus `--mount-path` still works. `detach` and `volumes set` accept `--restart` and `--wait-timeout` too.
 
 The script form `kibo ws volume detach wks_123 --no-input --json` detaches all volumes. `ws volumes set` replaces the full list. With no arguments in a terminal, it picks a running or stopped workspace and confirms detaching all volumes. In automation, a workspace with zero bindings in the command sends an empty list immediately.
 

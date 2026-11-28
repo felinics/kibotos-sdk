@@ -3,7 +3,7 @@ title: Python SDK
 description: Install, configure, and get started with kibotos — the official synchronous and asynchronous Python SDK for Kibotos.
 ---
 
-`kibotos` is the official Python SDK for the **Kibotos** v1 API. It ships both synchronous (`Kibotos`) and asynchronous (`AsyncKibotos`) clients powered by `httpx` and typed Pydantic v2 models (`py.typed` included).
+`kibotos` is the official Python SDK for the **Kibotos** v1 API. It ships synchronous (`Kibotos`) and asynchronous (`AsyncKibotos`) clients built on `httpx`, with typed Pydantic v2 models (`py.typed` included). Both cover the control plane (workspaces, volumes, exposures, Packs, egresses, resolvers) and the workspace data plane (exec, files, metrics, tunnel and proxy URLs).
 
 ## Requirements
 
@@ -51,18 +51,22 @@ with Kibotos() as client:
     ws = client.workspaces.wait(created.id, status=["available", "failed"], timeout=120)
     print(f"Workspace {ws.id} is {ws.status} in zone {ws.zone}")
 
-    # 3. Expose port 8080 over HTTPS
+    # 3. Run a command
+    result = client.workspaces.exec(ws.id, {"argv": ["python3", "--version"]})
+    print(result.exit_code, result.stdout)
+
+    # 4. Expose port 8080 over HTTPS
     exp = client.exposures.create(ws.id, port=8080, ttl_seconds=3600)
     print("Preview URL:", exp.url)
 
-    # 4. Clean up
+    # 5. Clean up
     client.exposures.revoke(ws.id, exp.id)
     client.workspaces.delete(ws.id)
 ```
 
 ### Asynchronous Client (`AsyncKibotos`)
 
-Every resource method and pagination iterator is available asynchronously on `AsyncKibotos`:
+`AsyncKibotos` has the same resources and methods. Await each call, and use `async for` with `iterate` and `exec_stream`:
 
 ```python
 import asyncio
@@ -77,6 +81,9 @@ async def main() -> None:
         )
         ws = await client.workspaces.wait(created.id, status=["available", "failed"], timeout=120)
         print(ws.id, ws.status)
+
+        result = await client.workspaces.exec(ws.id, {"argv": ["uname", "-a"]})
+        print(result.stdout)
 
         async for item in client.workspaces.iterate(status="available"):
             print(item.id, item.name)
@@ -120,14 +127,24 @@ Inspect the normalized base URL via `client.base_url`. If you do not use a `with
 
 ## Pydantic v2 Models & Forward Compatibility
 
-All response objects inherit from `KibotosModel` (`pydantic.BaseModel` configured with `extra="ignore"` and `populate_by_name=True`). Additive fields introduced in future Kibotos v1 API releases are safely ignored rather than breaking deserialization. Timestamps (`created_at`, `updated_at`, `expires_at`, `revoked_at`, `ready_at`) are parsed into Python `datetime` objects.
+All response objects inherit from `KibotosModel` (`pydantic.BaseModel` configured with `extra="ignore"` and `populate_by_name=True`). Fields added in later Kibotos v1 API releases are ignored instead of breaking deserialization. Timestamps (`created_at`, `updated_at`, `expires_at`, `revoked_at`, `ready_at`, `published_at`, `modified_at`) are parsed into `datetime` objects.
+
+Request arguments that take a model (`resources`, `network`, `volumes`, `timeout`, `socks5`, an `ExecRequest`, and so on) also accept a plain `dict` with the same keys.
 
 ## Resource Namespaces
 
 | Namespace | Guide | Methods |
 | --- | --- | --- |
-| `client.workspaces` | [Workspaces](./workspaces) | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `set_timeout`, `set_network`, `attach_volume`, `detach_volume`, `wait` |
+| `client.workspaces` | [Workspaces](./workspaces) | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `set_timeout`, `set_network`, `set_volumes`, `set_packs`, `attach_volume`, `detach_volume`, `wait` |
+| `client.workspaces` | [Exec, Files & Tunnels](./exec-files-and-tunnels) | `exec`, `exec_stream`, `list_files`, `stat_file`, `read_file`, `write_file`, `make_dir`, `move_file`, `delete_file`, `get_metrics`, `ws_url`, `tunnel_ws_url`, `desktop_vnc_url`, `proxy_url`, `proxy_ws_url`, `ws_headers` |
 | `client.volumes` | [Volumes](./volumes) | `create`, `list`, `iterate`, `get`, `update`, `resize`, `delete`, `wait` |
 | `client.exposures` | [Exposures](./exposures) | `create`, `list`, `iterate`, `get`, `revoke` |
+| `client.packs` | [Packs & Networking](./packs-and-networking) | `list`, `get`, `get_revision` |
+| `client.egresses` | [Packs & Networking](./packs-and-networking) | `create`, `list`, `get`, `replace`, `update`, `delete` |
+| `client.resolvers` | [Packs & Networking](./packs-and-networking) | `create`, `list`, `get`, `replace`, `update`, `delete` |
 | `client.templates` | [Templates & Zones](./templates-and-zones) | `list`, `iterate`, `get`, `list_revisions`, `get_revision` |
 | `client.zones` | [Templates & Zones](./templates-and-zones) | `list`, `iterate` |
+
+`client.packs`, `client.egresses`, and `client.resolvers` have no `iterate` helper. Pass `next_page_token` from the previous page as `page_token`.
+
+See [Errors & Retries](./errors-and-retries) for the exception hierarchy, automatic retries, and `Idempotency-Key` handling.

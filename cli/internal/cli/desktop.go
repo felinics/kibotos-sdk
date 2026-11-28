@@ -240,7 +240,7 @@ func (a *App) newDesktopCmd() *cobra.Command {
 				{Key: "Workspace", Value: wsID},
 				{Key: "Status", Value: p.FormatStatus(string(ws.Status))},
 				{Key: "Desktop Pack", Value: packID},
-				{Key: "Desktop URL", Value: desktopURL},
+				{Key: "Desktop URL", Value: p.Link(desktopURL)},
 			})
 		},
 	}

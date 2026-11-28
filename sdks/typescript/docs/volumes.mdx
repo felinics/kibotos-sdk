@@ -1,9 +1,9 @@
 ---
 title: Volumes
-description: Create, list, update, resize, delete, and wait for persistent Kibotos volumes with @kibotos/sdk.
+description: Create, list, update, resize, delete, and wait for persistent Kibotos volumes, and attach them to workspaces, with @kibotos/sdk.
 ---
 
-Manage durable persistent storage volumes through `client.volumes` (`VolumesResource`). Volumes can be attached to workspaces in the same zone at creation time or while stopped.
+Manage persistent storage volumes through `client.volumes` (`VolumesResource`). A workspace can mount one or more volumes from its own zone. Bind them at creation, or while the workspace is stopped or failed.
 
 ## Create a Volume
 
@@ -127,3 +127,31 @@ const ready = await client.volumes.wait('vol_01j9...', {
 ```
 
 As with workspaces, `timeoutSeconds` defaults to `30` and automatically loops across `<= 60s` server long-poll windows when larger than `60`.
+
+## Attach Volumes to a Workspace
+
+Volume bindings are managed on the workspace. Pass `volumes` to `workspaces.create`, or replace the full list on a `'stopped'` or `'failed'` workspace with `workspaces.setVolumes`:
+
+```ts
+const ws = await client.workspaces.create({
+  template: { id: 'python-3.12' },
+  zone: volume.zone,
+  volumes: [{ id: volume.id, mount_path: '/data', delete_with_workspace: false }],
+});
+
+// Replace the bindings later (the workspace must be stopped or failed)
+await client.workspaces.setVolumes(ws.id, {
+  volumes: [
+    { id: volume.id, mount_path: '/data' },
+    { id: 'vol_cache', mount_path: '/cache' },
+  ],
+});
+```
+
+| Binding field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Volume ID. The volume must be unbound and in the workspace's zone. |
+| `mount_path` | `string` | Absolute mount path inside the workspace. |
+| `delete_with_workspace` | `boolean` | Delete the volume when the workspace is deleted. |
+
+A bound volume reports the workspace in `workspace_id`. See [Workspaces](./workspaces#attach-and-detach-volumes) for `setVolumes` and the single-volume `attachVolume` / `detachVolume` methods.

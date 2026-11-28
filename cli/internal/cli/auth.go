@@ -155,7 +155,7 @@ func (a *App) newLoginCmd() *cobra.Command {
 			}
 
 			p.Statusf("To sign in to Kibotos, open this URL in your browser:")
-			p.Statusf("  %s", start.VerificationURLComplete)
+			p.Statusf("  %s", p.LinkErr(start.VerificationURLComplete))
 			p.Statusf("Verification code: %s", start.UserCode)
 
 			if !noBrowser && start.VerificationURLComplete != "" {

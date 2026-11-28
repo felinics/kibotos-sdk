@@ -1,0 +1,337 @@
+---
+title: Exec, Files & Tunnels
+description: Run commands, stream output, transfer files, read metrics, and open WebSocket sessions, tunnels, proxy, and desktop connections on Kibotos workspaces with @kibotos/sdk.
+---
+
+Data-plane methods live on `client.workspaces` and need an `'available'` workspace. `getMetrics` is the exception and also returns retained metrics for deleted workspaces.
+
+## Run a Command
+
+`client.workspaces.exec(id: string, body: ExecRequest, opts?: RequestOptions): Promise<ExecResponse>`
+
+Runs a command once and returns its output (`POST /v1/workspaces/{id}/exec`). `argv` is passed to the process as-is, without a shell. A non-zero exit code is part of the result and does not throw.
+
+```ts
+import { Kibotos } from '@kibotos/sdk';
+
+const client = new Kibotos();
+
+const result = await client.workspaces.exec('wks_01j9...', {
+  argv: ['/bin/sh', '-c', 'python3 main.py | tail -n 20'],
+  working_dir: '/app',
+  env: { MODE: 'test' },
+  timeout_seconds: 60,
+});
+
+console.log(result.exit_code, result.termination_reason, `${result.duration_ms}ms`);
+console.log(result.stdout);
+if (result.truncated) console.warn('Output exceeded max_output_bytes');
+```
+
+### `ExecRequest` Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `argv` | `string[]` | Command and arguments. Use `['/bin/sh', '-c', '...']` for shell syntax. |
+| `env` | `Record<string, string>` | Extra environment variables. |
+| `working_dir` | `string \| null` | Working directory. Defaults to the selected user's home. Relative paths resolve against it. |
+| `user` | `string \| null` | Template default user when omitted. Accepts a user declared by the template or `'root'`. |
+| `stdin` | `string \| null` | Written to the process after it starts, then standard input is closed. |
+| `timeout_seconds` | `number` | Defaults to `30`. `exec` accepts at most `600`. Use `execStream` or a WebSocket process for longer runs. |
+| `max_output_bytes` | `number` | Cap on combined stdout and stderr for `exec`. Defaults to `1048576`, at most `4194304`. |
+
+### `ExecResponse` Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `exit_code` | `number \| null` | Process exit code, or `null`. |
+| `signal` | `number \| null` | Number of the signal that ended the process, or `null`. |
+| `termination_reason` | `'exited' \| 'signaled' \| 'timed_out' \| 'canceled' \| 'failed' \| 'memory_saturated' \| 'out_of_memory'` | Why the process ended. |
+| `stdout`, `stderr` | `string` | Captured output. |
+| `truncated` | `boolean` | Output exceeded `max_output_bytes` and the remainder was dropped. |
+| `duration_ms` | `number` | Run time in milliseconds. |
+
+`exec` sets its HTTP timeout to `timeout_seconds` (or `30`) plus 15 seconds unless you pass `timeoutMs`.
+
+## Stream Command Output (SSE)
+
+`client.workspaces.execStream(id: string, body: ExecRequest, opts?: RequestOptions): AsyncGenerator<ExecEvent>`
+
+Sends the same request with `Accept: text/event-stream` and yields events as they arrive, with no output limit:
+
+```ts
+for await (const { event, data } of client.workspaces.execStream('wks_01j9...', {
+  argv: ['python3', '-u', 'train.py'],
+  timeout_seconds: 900,
+})) {
+  if (event === 'stdout') process.stdout.write((data as { data: string }).data);
+  if (event === 'stderr') process.stderr.write((data as { data: string }).data);
+  if (event === 'exited') console.log('exit code:', (data as { exit_code: number | null }).exit_code);
+  if (event === 'error') console.error('exec failed:', data);
+}
+```
+
+`ExecEvent.data` is the decoded JSON payload (typed `unknown`):
+
+| `event` | `data` |
+| --- | --- |
+| `started` | `{ pid, incarnation }` |
+| `stdout`, `stderr` | `{ data: string }` |
+| `heartbeat` | `{}` |
+| `exited` | `{ exit_code, signal, termination_reason, duration_ms }` |
+| `error` | API error body (`code`, `message`, `status`, `request_id`, ...) |
+
+A failure that happens after the stream opens arrives as an `error` event and is not thrown. `execStream` has no default client deadline. Pass `timeoutMs` or `signal` to bound it. Breaking out of the loop cancels the request.
+
+## Files
+
+Paths are absolute, or relative to the home directory of the selected user. Every file method accepts `user` to act as another workspace user.
+
+```ts
+const ws = client.workspaces;
+const id = 'wks_01j9...';
+
+// Create a directory (throws ConflictError file_exists when the path exists)
+await ws.makeDir(id, { path: '/app/data', mode: '0755' });
+
+// Write a file: string, Uint8Array, Blob, or ReadableStream<Uint8Array>
+const written = await ws.writeFile(id, '/app/data/config.json', JSON.stringify({ debug: true }), {
+  mode: '0644',
+  createOnly: true,
+});
+console.log(written.path, written.size_bytes, written.sha256);
+
+// List a directory two levels deep
+const listing = await ws.listFiles(id, '/app', { depth: 2 });
+for (const entry of listing.entries) {
+  console.log(entry.type, entry.mode, entry.size_bytes, entry.path);
+}
+
+// Inspect, move, and delete
+const stat = await ws.statFile(id, '/app/data/config.json');
+await ws.moveFile(id, { source: '/app/data/config.json', destination: '/app/config.json' });
+await ws.deleteFile(id, '/app/data');
+```
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `listFiles(id, path, opts?: ListFilesOptions)` | `Promise<FileList>` | `depth` sets how many directory levels to include. |
+| `statFile(id, path, opts?: FileOptions)` | `Promise<FileEntry>` | `{ path, name, type, mode, modified_at, size_bytes }`. |
+| `readFile(id, path, opts?: ReadFileOptions)` | `Promise<Response>` by default | See below. |
+| `writeFile(id, path, content: FileContent, opts?: WriteFileOptions)` | `Promise<FileWriteResult>` | Creates or replaces the file. Body up to 1 GiB. `mode` takes octal bits such as `'0644'`. `createOnly` fails with `file_exists` instead of replacing. |
+| `makeDir(id, body: MakeDirectoryRequest, opts?)` | `Promise<FileEntry>` | `{ path, mode?, user? }`. |
+| `moveFile(id, body: MoveFileRequest, opts?)` | `Promise<FileEntry>` | `{ source, destination, user? }`. Moves or renames a file or directory. |
+| `deleteFile(id, path, opts?: FileOptions)` | `Promise<void>` | Deletes a file or directory. |
+
+### Read a File
+
+`readFile` returns the raw `Response` by default so you can inspect status and headers. Pass `as: 'bytes'` for a `Uint8Array` or `as: 'stream'` for the `ReadableStream<Uint8Array>` body.
+
+```ts
+// Whole file as bytes
+const bytes = await ws.readFile(id, '/app/output.bin', { as: 'bytes' });
+
+// Byte range: status 206 with Content-Range
+const part = await ws.readFile(id, '/app/output.bin', { range: 'bytes=0-1048575' });
+console.log(part.status, part.headers.get('Content-Range'));
+
+// Revalidate a cached copy: status 304 when the ETag still matches
+const etag = part.headers.get('ETag') ?? undefined;
+const check = await ws.readFile(id, '/app/output.bin', { ifNoneMatch: etag });
+if (check.status !== 304) {
+  const fresh = new Uint8Array(await check.arrayBuffer());
+}
+```
+
+Use `range` to fetch files larger than 1 GiB in parts.
+
+`readFile` and `writeFile` have no default client deadline. Pass `timeoutMs` or `signal` to bound a transfer. `exec`, `execStream`, `writeFile`, `makeDir`, `moveFile`, and `deleteFile` are sent once and never retried.
+
+## Metrics
+
+`client.workspaces.getMetrics(id: string, params?: WorkspaceMetricsParams, opts?: RequestOptions): Promise<WorkspaceMetrics>`
+
+Reads host and guest time series, including retained metrics for deleted workspaces. `start` and `end` accept RFC 3339 strings or `Date` values.
+
+```ts
+const metrics = await client.workspaces.getMetrics('wks_01j9...', {
+  start: new Date(Date.now() - 60 * 60 * 1000),
+  end: new Date(),
+});
+
+console.log('step:', metrics.step_seconds, 'earliest:', metrics.earliest_time);
+for (const point of metrics.guest) {
+  console.log(point.time, point.cpu_used_percent, point.memory_used_bytes, point.disk_used_bytes);
+}
+for (const point of metrics.host) {
+  console.log(point.time, point.cpu_cores, point.memory_bytes);
+}
+```
+
+Guest points always carry `cpu_count`, `cpu_used_percent`, `memory_total_bytes`, `memory_used_bytes`, `memory_cache_bytes`, `disk_total_bytes`, and `disk_used_bytes`. Host fields (CPU cores, memory bytes, CPU / memory / IO pressure ratios, network rates) are optional and omitted when a measurement is unavailable.
+
+## Interactive Sessions over WebSocket
+
+`client.workspaces.connectWS(id: string, opts?: WebSocketConnectOptions): WorkspaceSocket`
+
+Opens the multiplexed workspace channel (`GET /v1/workspaces/{id}/ws`). One connection carries any number of streams, each identified by a non-zero 32-bit stream ID you choose:
+
+| Stream kind | Purpose |
+| --- | --- |
+| `process` | PTY terminals and pipe commands, with reattach. |
+| `fs.watch` | Directory change events. |
+| `tunnel` | Byte stream to a port or Unix socket in the workspace. |
+
+Text frames carry JSON control messages. Binary frames carry a 6-byte header (version `0x01`, big-endian 32-bit stream ID, channel byte) followed by raw bytes.
+
+### Run a Process
+
+```ts
+import { Kibotos, WorkspaceChannel } from '@kibotos/sdk';
+
+const client = new Kibotos();
+const conn = client.workspaces.connectWS('wks_01j9...');
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
+
+conn.onFrame((message) => {
+  if (message.type === 'binary') {
+    const { channel, payload } = message.frame;
+    if (channel === WorkspaceChannel.stdout) process.stdout.write(decoder.decode(payload));
+    if (channel === WorkspaceChannel.stderr) process.stderr.write(decoder.decode(payload));
+    return;
+  }
+
+  const frame = message.frame;
+  if (frame.type === 'opened') {
+    conn.sendBinary(1, WorkspaceChannel.stdin, encoder.encode('hello\n'));
+    conn.sendControl({ type: 'close_stdin', stream_id: 1 });
+  } else if (frame.type === 'exited') {
+    console.log('exit code:', frame.exit_code);
+    conn.close();
+  } else if (frame.type === 'error') {
+    console.error(frame.code, frame.message);
+  }
+});
+
+conn.socket.addEventListener('open', () => {
+  conn.open(1, 'process', { action: 'start', mode: 'pipe', argv: ['cat'] });
+});
+```
+
+`process` open parameters:
+
+| Parameter | Description |
+| --- | --- |
+| `action` | `'start'` a new process or `'attach'` to a running one. |
+| `mode` | `'pipe'` (separate stdin / stdout / stderr channels) or `'pty'` (one `pty` channel). |
+| `argv`, `env`, `working_dir`, `user`, `timeout_seconds` | Same meaning as in `ExecRequest`. |
+| `rows`, `cols` | Initial terminal size for `'pty'`. |
+| `pid`, `incarnation`, `resume_from` | Identify the process for `'attach'`, with optional per-channel resume offsets. |
+
+### Open a Terminal (PTY)
+
+```ts
+conn.socket.addEventListener('open', () => {
+  conn.open(1, 'process', {
+    action: 'start',
+    mode: 'pty',
+    argv: ['/bin/bash', '-l'],
+    rows: 24,
+    cols: 80,
+  });
+});
+
+// Keystrokes go in and terminal output comes back on the pty channel
+conn.sendBinary(1, WorkspaceChannel.pty, encoder.encode('ls -la\n'));
+
+// Follow terminal size changes, or interrupt the foreground process
+conn.sendControl({ type: 'resize', stream_id: 1, rows: 40, cols: 120 });
+conn.sendControl({ type: 'signal', stream_id: 1, signal: 'SIGINT' });
+```
+
+### `WorkspaceSocket` API
+
+| Member | Description |
+| --- | --- |
+| `socket` | The underlying `WebSocket` (`binaryType` is set to `'arraybuffer'`). |
+| `onFrame(listener)` | Subscribes to decoded frames: `{ type: 'control', frame }` or `{ type: 'binary', frame: { stream_id, channel, payload } }`. Returns an unsubscribe function. |
+| `open(streamId, kind, params?)` | Sends an `open` control for a `'process'`, `'fs.watch'`, or `'tunnel'` stream. |
+| `sendControl(frame)` | Sends a JSON control: `resize`, `signal`, `close_stdin`, `close`, or `ping`. |
+| `sendBinary(streamId, channel, payload)` | Sends stream bytes on a `WorkspaceChannel`: `stdin` (0), `stdout` (1), `stderr` (2), `pty` (3), `tunnel` (4). |
+| `close(code?, reason?)` | Closes the connection. |
+
+Server control types are `opened`, `exited`, `fs.event`, `heartbeat`, `closed`, `error`, and `pong`. To build frames for your own transport, use the exported `encodeBinaryFrame`, `decodeBinaryFrame`, and `decodeWorkspaceFrame`.
+
+Watch a directory on the same connection with `conn.open(2, 'fs.watch', { path: '/app' })`. Changes arrive as `fs.event` controls.
+
+## Tunnels, Proxy, and Desktop
+
+These helpers return a raw `WebSocket` with no multiplexing header. The matching URL builders let you bring your own client.
+
+| Connect | URL builder | Endpoint |
+| --- | --- | --- |
+| `connectTunnel(id, target, opts?)` | `tunnelWSUrl(id, target)` | Raw bytes of one connection to a TCP port or Unix socket in the workspace. |
+| `connectProxy(id, port, opts?)` | `proxyWSUrl(id, port, path?, query?)` | WebSocket upgrade to an HTTP service on a loopback port. |
+| `connectDesktop(id, opts?)` | `desktopVNCUrl(id)` | RFB (VNC) stream of the workspace desktop, compatible with noVNC. |
+| — | `proxyUrl(id, port, path?, query?)` | HTTP(S) URL of a loopback service, for use with `fetch`. |
+| `connectWS(id, opts?)` | `wsUrl(id)` | The multiplexed channel above. |
+
+### Tunnel to a Port or Unix Socket
+
+`TunnelTarget` is either `{ port, family? }` (`family` is `'ipv4'` by default, or `'ipv6'`) or `{ unix_path }`:
+
+```ts
+const tunnel = client.workspaces.connectTunnel('wks_01j9...', { port: 5432 });
+tunnel.binaryType = 'arraybuffer';
+
+tunnel.addEventListener('open', () => tunnel.send(new Uint8Array([0x00])));
+tunnel.addEventListener('message', (event) => {
+  const bytes = new Uint8Array(event.data as ArrayBuffer);
+  console.log('received', bytes.byteLength, 'bytes');
+});
+
+const docker = client.workspaces.connectTunnel('wks_01j9...', { unix_path: '/var/run/docker.sock' });
+```
+
+### Proxy to a Workspace Service
+
+The proxy forwards requests to an HTTP service listening on a loopback port without creating a public [exposure](./exposures). Headers, body, and status code pass through unchanged.
+
+```ts
+const url = client.workspaces.proxyUrl('wks_01j9...', 8080, '/api/health', new URLSearchParams({ verbose: '1' }));
+const res = await fetch(url, { headers: client.workspaces.wsHeaders() });
+console.log(res.status, await res.text());
+
+// WebSocket upgrade to the same service
+const socket = client.workspaces.connectProxy('wks_01j9...', 8080, { path: '/ws' });
+```
+
+`proxyUrl` throws `RangeError` for a port outside `1`–`65535` and `TypeError` for a path containing `.` or `..` segments. `wsHeaders(overrides?)` returns the `Authorization` and default headers for any request you send yourself.
+
+### Remote Desktop
+
+```ts
+const vnc = client.workspaces.connectDesktop('wks_01j9...', { protocols: 'binary' });
+vnc.binaryType = 'arraybuffer';
+```
+
+The connection fails with `409 desktop_not_enabled` unless the workspace has a Pack that provides `desktop.v1`. See [Packs & Networking](./packs-and-networking#packs).
+
+### WebSocket Runtime Support
+
+`WebSocketConnectOptions` accepts `protocols`, extra handshake `headers`, and a `factory`.
+
+- **Node.js**: The SDK passes the `Authorization` header through Node's built-in `WebSocket`. Node 22 and later expose it by default. Node 20 exposes it from 20.10 behind `--experimental-websocket`.
+- **Runtimes whose `WebSocket` cannot set handshake headers** (Cloudflare Workers, browsers): Supply a `factory` that receives the URL, headers, and requested subprotocols. Without one the SDK throws `APIConnectionError`.
+
+A factory built on the `ws` package:
+
+```ts
+import WebSocket from 'ws';
+
+const conn = client.workspaces.connectWS('wks_01j9...', {
+  factory: (url, { headers, protocols }) =>
+    new WebSocket(url, protocols, { headers }) as unknown as globalThis.WebSocket,
+});
+```

@@ -5,6 +5,8 @@
     "workspaces",
     "volumes",
     "exposures",
+    "exec-files-and-tunnels",
+    "packs-and-networking",
     "templates-and-zones",
     "errors-and-retries"
   ]

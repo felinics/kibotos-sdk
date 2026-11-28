@@ -74,14 +74,15 @@ In edge runtimes without `process.env` (such as Cloudflare Workers), pass `apiKe
 | `client.zones` | `list`, `iterate` |
 | `client.templates` | `list`, `iterate`, `get`, `listRevisions`, `getRevision` |
 | `client.workspaces` | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `setTimeout`, `setNetwork`, `setVolumes`, `setPacks`, `getMetrics`, `attachVolume`, `detachVolume`, `wait` |
+| `client.workspaces` (data plane) | `exec`, `execStream`, `listFiles`, `statFile`, `readFile`, `writeFile`, `makeDir`, `moveFile`, `deleteFile`, `connectWS`, `connectTunnel`, `connectDesktop`, `connectProxy`, `wsUrl`, `tunnelWSUrl`, `desktopVNCUrl`, `proxyUrl`, `proxyWSUrl`, `wsHeaders` |
 | `client.volumes` | `create`, `list`, `iterate`, `get`, `update`, `resize`, `delete`, `wait` |
 | `client.exposures` | `create`, `list`, `iterate`, `get`, `revoke` |
 | `client.packs` | `list`, `get`, `getRevision` |
 | `client.egresses`, `client.resolvers` | `create`, `list`, `get`, `replace` (configuration), `update` (name and labels), `delete` |
 
-Workspace creation accepts `volumes`, Pack IDs in `packs`, and a `network` policy with `allow`, `deny`, `egresses`, and `resolvers`. Use `update(id, { resources: { vcpus, memory_mib, disk_mib } })` to resize a stopped or failed workspace. The root disk can only grow. `setVolumes` and `setPacks` take the complete list, and an empty list clears it. Pack changes take effect on the next start. The legacy `volume` field and single-volume methods remain available.
+Workspace creation accepts `volumes`, Pack IDs in `packs`, and a `network` policy with `allow`, `deny`, `egresses`, and `resolvers`. Use `update(id, { resources: { vcpus, memory_mib, disk_mib } })` to resize a stopped or failed workspace. The root disk can only grow. `setVolumes` and `setPacks` take the complete list, and an empty list clears it. A workspace binds up to four Packs, and Pack changes take effect on the next start. The legacy `volume` field and single-volume methods remain available. `attachVolume` leaves only the given volume attached and `detachVolume` removes every attachment, so use `setVolumes` on multi-volume workspaces.
 
-`setNetwork` also accepts `drain_seconds`. The response's `network.applied` is `null` while the workspace is inactive. `getMetrics(id, { start, end })` accepts RFC 3339 strings or `Date` values and returns host and guest time series.
+`setNetwork` replaces the whole policy and also accepts `drain_seconds`. The response's `network.applied` is `null` while the workspace is not running. `getMetrics(id, { start, end })` accepts RFC 3339 strings or `Date` values and returns host and guest time series.
 
 ## Commands and Files
 
@@ -147,7 +148,7 @@ for await (const ws of client.workspaces.iterate({
 
 ## Retries, Idempotency & Cancellation
 
-- **Automatic idempotency**: Control-plane `POST` mutations automatically generate a UUID v4 `Idempotency-Key` header if omitted and reuse the same key across retries. You may also pass `idempotencyKey` in `RequestOptions`.
+- **Automatic idempotency**: Control-plane `POST` mutations automatically generate a UUID v4 `Idempotency-Key` header if omitted and reuse the same key across retries. You may also pass `idempotencyKey` in `RequestOptions`. `exec`, `makeDir`, and `moveFile` never send one.
 - **Retries**: Exponential backoff with jitter for `retryable: true` API errors, HTTP `429` (honoring `Retry-After` seconds or HTTP-date), `500`/`502`/`503`/`504`, and transient network failures.
 - **One-shot data-plane requests**: `exec`, `execStream`, `writeFile`, `makeDir`, `moveFile`, and `deleteFile` make a single attempt.
 - **Cancellation**: Pass an `AbortSignal` via `{ signal }` to HTTP methods to cancel in-flight requests, retry delays, and `wait()` loops.
@@ -187,6 +188,10 @@ try {
   }
 }
 ```
+
+## Documentation
+
+Reference guides live in [`docs/`](./docs) and are published at [docs.kibo.to](https://docs.kibo.to): workspaces, volumes, exposures, exec / files / tunnels, Packs and networking, templates and zones, and errors and retries.
 
 ## License
 

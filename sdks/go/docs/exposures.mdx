@@ -3,7 +3,7 @@ title: Exposures
 description: Create, list, iterate, inspect, and revoke temporary public HTTPS port exposures for Kibotos workspaces in Go.
 ---
 
-Expose HTTP/HTTPS services inside an available workspace on temporary public HTTPS URLs (`*.kibo.run`) via `client.Exposures` (`*kibotos.ExposuresService`).
+Expose a TCP port of an `available` workspace on a temporary public HTTPS URL (`*.kibo.run`) via `client.Exposures` (`*kibotos.ExposuresService`). To reach a workspace service with your API key and no public URL, use [`Workspaces.Proxy`](./exec-files-and-tunnels#proxy-to-a-workspace-service) instead.
 
 ## Create an Exposure
 
@@ -75,3 +75,5 @@ if err != nil {
 }
 fmt.Println(revoked.Status, revoked.RevokedAt) // revoked
 ```
+
+Revoking an already revoked exposure succeeds.

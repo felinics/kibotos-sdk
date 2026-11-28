@@ -3,7 +3,7 @@ title: Errors & Retries
 description: Inspect *kibotos.APIError responses, use error helper predicates, configure automatic retries with Retry-After, and pass WithIdempotencyKey in Go.
 ---
 
-The Go SDK returns structured `*kibotos.APIError` values for API failures and uses jittered exponential backoff on retry-enabled requests. Process execution, file content transfers, and file mutations send one request.
+The Go SDK returns structured `*kibotos.APIError` values for API failures and uses jittered exponential backoff on retry-enabled requests. Process execution, file content transfers, file mutations, and proxied requests send one request.
 
 ## `*kibotos.APIError`
 
@@ -30,6 +30,25 @@ All helpers work cleanly with wrapped errors via `errors.As`:
 | `kibotos.IsWaitTimeout(err)` | HTTP `408` or code `wait_timeout`. |
 | `kibotos.IsUnexpectedStatus(err)` | Code `unexpected_status` (HTTP `409` during `Wait`). |
 | `kibotos.IsRetryable(err)` | `apiErr.Retryable == true` or HTTP `429`, `500`, `502`, `503`, `504`. |
+
+### Common Error Codes
+
+Match other failures on `apiErr.Code`:
+
+| Code | Status | When |
+| --- | --- | --- |
+| `invalid_state` | `409` | The workspace is in the wrong status, such as `SetVolumes` or a resize on a running workspace. |
+| `volume_attached` | `409` | Deleting a volume that is bound to a workspace. |
+| `resource_in_use` | `409` | Deleting an egress or resolver that a workspace policy still references. |
+| `file_exists` | `409` | `MakeDir` on an existing path, or `WriteFile` with `CreateOnly` on an existing file. |
+| `desktop_not_enabled` | `409` | `DialDesktopVNC` on a workspace without a `desktop.v1` Pack. |
+
+```go
+var apiErr *kibotos.APIError
+if errors.As(err, &apiErr) && apiErr.Code == "file_exists" {
+	// the destination already exists
+}
+```
 
 ### Handling Errors
 
@@ -86,9 +105,13 @@ client, err := kibotos.NewClient(
 noRetryClient, err := kibotos.NewClient(apiKey, kibotos.WithMaxRetries(0))
 ```
 
+### Requests That Are Never Retried
+
+`Exec`, `ExecStream`, `ReadFile`, `WriteFile`, `MakeDir`, `MoveFile`, `DeleteFile`, and `Proxy` are sent exactly once, regardless of `WithMaxRetries`. They can have side effects or carry a body that cannot be replayed, so decide in your own code whether a failed call is safe to repeat. These requests never send an `Idempotency-Key`.
+
 ## Idempotency (`WithIdempotencyKey`)
 
-Control-plane `POST` mutations and egress and resolver replacements generate a UUID v4 `Idempotency-Key` header when omitted and reuse it across retries.
+Control-plane `POST` mutations (`Workspaces.Create`, `Start`, `Stop`, `SetTimeout`, `Volumes.Create`, `Resize`, `Exposures.Create`, `Egresses.Create`, `Resolvers.Create`) and `Egresses.Replace` / `Resolvers.Replace` generate a UUID v4 `Idempotency-Key` header when omitted and reuse it across retries.
 
 Supply your own deterministic key across restarts with `kibotos.WithIdempotencyKey`:
 
@@ -105,4 +128,19 @@ ws, err := client.Workspaces.Create(
 
 ## Context Cancellation & Timeouts
 
-Every method takes a `context.Context` as its first argument. Canceling the context immediately cancels in-flight HTTP requests, retry sleeps, and `Wait` loops. Per-attempt HTTP timeouts default to `30s` (`WithTimeout`), while `Wait` calls automatically extend each chunk's per-attempt timeout to `chunkSeconds + 15s`.
+Every method takes a `context.Context` as its first argument. Canceling the context immediately cancels in-flight HTTP requests, retry sleeps, and `Wait` loops.
+
+| Method | Default bound |
+| --- | --- |
+| Most methods | Per-attempt timeout of `30s` (`WithTimeout`). |
+| `Wait` | Each chunk's per-attempt timeout is `chunkSeconds + 15s`. |
+| `Exec` | Client timeout plus the command's `TimeoutSeconds` (or `30`). |
+| `MakeDir`, `MoveFile`, `DeleteFile` | Client timeout. |
+| `DialWS`, `DialTunnel`, `DialDesktopVNC` | Client timeout for the handshake only. |
+| `ExecStream`, `ReadFile`, `WriteFile`, `Proxy` | `ctx` only (plus any `Timeout` on a custom `http.Client`). |
+
+## Streaming and WebSocket Errors
+
+- `ExecStream` returns the `*APIError` from an `error` event, and an error wrapping `io.ErrUnexpectedEOF` when the stream ends before `exited`.
+- `DialWS`, `DialTunnel`, and `DialDesktopVNC` return a `*kibotos.APIError` when the server rejects the upgrade, so the predicate helpers work on handshake failures.
+- `WorkspaceWS.Read` and `BinarySocket.Read` return `io.EOF` after a normal close. Stream-level failures on the multiplexed channel arrive as `error` control events.

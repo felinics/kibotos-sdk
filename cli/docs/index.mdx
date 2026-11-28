@@ -42,16 +42,18 @@ kibo whoami
 kibo zone list
 kibo template list
 
-# 4. Choose a template and enter devbox as the workspace name
+# 4. Create a workspace: pick a template and enter devbox as its name
 kibo ws create
 
-# Choose the workspace and run this command
-kibo exec -- uname -a
+# 5. Run a command and open a login shell
+kibo exec devbox -- uname -a
+kibo shell devbox
 
-# 5. Expose port 8080 over a temporary HTTPS URL (accepts workspace ID or unique name)
+# 6. Copy a file into the home directory, then expose port 8080 over a temporary HTTPS URL
+kibo cp ./app.py devbox:.
 kibo open devbox 8080 --ttl 1h
 
-# 6. Clean up when finished (waits until deleted by default; pass --no-wait to return immediately)
+# 7. Clean up (waits until deleted by default; pass --no-wait to return immediately)
 kibo ws delete devbox
 ```
 
@@ -90,9 +92,9 @@ Available on every `kibo` command:
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--json` | `false` | Output strictly valid JSON to `stdout` (shorthand for `-o json`). |
-| `-o`, `--output <format>` | `table` | Output format: `table` or `json` (env: `KIBO_OUTPUT`). |
+| `-o`, `--output <format>` | `table` | Output format: `table` or `json` (env: `KIBO_OUTPUT` / `KIBOTOS_OUTPUT`). |
 | `-q`, `--quiet` | `false` | Output only the primary value, such as a resource ID or Desktop URL, and suppress progress messages. |
-| `--no-input` | `false` | Disable interactive prompts and fail fast on missing inputs (env: `KIBO_NO_INPUT`). |
+| `--no-input` | `false` | Disable interactive prompts and fail fast on missing inputs (env: `KIBO_NO_INPUT` / `KIBOTOS_NO_INPUT`). |
 | `-y`, `--yes` | `false` | Skip interactive confirmation prompts on destructive actions. |
 | `--no-color` | `false` | Disable colored output (also respects `NO_COLOR`). |
 | `--profile <name>` | active profile | Named profile from `config.json` to use for this command. |
@@ -100,13 +102,15 @@ Available on every `kibo` command:
 | `--api-key <key>` | — | Override the Kibotos API key (`kb_...`) for this invocation. |
 | `--api-url <url>` | `https://api.kibo.to/v1` | Override the Kibotos v1 API base URL. |
 
+`kibo --version` and `kibo -v` print the same details as `kibo version`: CLI version, Go SDK version, Go runtime, platform, and the build commit and date when available. `kibo version --json` returns them as an object, and `kibo version -q` prints only the CLI version.
+
 ## Interactive vs. Non-Interactive Mode
 
 In a terminal, `kibo` asks for essential missing inputs on stderr. Pick resources with the arrow keys and Enter. Use `--yes` to skip destructive confirmations and supply any known inputs to skip their questions.
 
 For scripts and AI agents, supply required arguments and flags with `--no-input --json` or use `-q` to capture IDs. Prompts are disabled when stdin or stderr is a non-TTY, the output format is JSON, or `--no-input`, `-q`, `TERM=dumb`, `CI`, `KIBO_NO_INPUT`, or `KIBOTOS_NO_INPUT` disables them. Missing required inputs fail with exit 2 and a hint before authentication.
 
-A running workspace can be stopped and restarted for a resize, volume update, or Pack change after one `[Y/n]` confirmation. A shell on a stopped workspace offers to start it. Declining cancels before applying changes. Automation must pass `--restart` or `--start` to authorize these transitions.
+A running workspace can be stopped and restarted for a resize, volume update, or Pack change after one `[Y/n]` confirmation (yes by default). A shell or desktop on a stopped workspace offers to start it. Declining cancels before applying changes. Automation must pass `--restart` or `--start` to authorize these transitions. See [Apply configuration changes on a running workspace](workspaces#apply-configuration-changes-on-a-running-workspace).
 
 ## Scripting & JSON Mode
 

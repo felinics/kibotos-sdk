@@ -98,7 +98,7 @@ func (a *App) newExposureListCmd() *cobra.Command {
 					e.ID,
 					strconv.Itoa(e.Port),
 					p.FormatStatus(string(e.Status)),
-					e.URL,
+					p.Link(e.URL),
 					output.FormatTime(e.ExpiresAt),
 				})
 			}
@@ -286,7 +286,7 @@ func (a *App) renderExposure(exp *kibotos.Exposure) error {
 		{Key: "ID", Value: exp.ID},
 		{Key: "Workspace ID", Value: exp.WorkspaceID},
 		{Key: "Port", Value: strconv.Itoa(exp.Port)},
-		{Key: "URL", Value: exp.URL},
+		{Key: "URL", Value: p.Link(exp.URL)},
 		{Key: "Status", Value: p.FormatStatus(string(exp.Status))},
 		{Key: "Expires At", Value: output.FormatTime(exp.ExpiresAt)},
 		{Key: "Revoked At", Value: output.FormatTimePtr(exp.RevokedAt)},

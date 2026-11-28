@@ -1,9 +1,9 @@
 ---
 title: Volumes
-description: Create, list, iterate, update, resize, delete, and wait for persistent Kibotos volumes in Go.
+description: Create, list, iterate, update, resize, delete, and wait for persistent Kibotos volumes, and attach them to workspaces, in Go.
 ---
 
-Manage durable persistent storage volumes via `client.Volumes` (`*kibotos.VolumesService`).
+Manage persistent storage volumes via `client.Volumes` (`*kibotos.VolumesService`). A workspace can mount one or more volumes from its own zone. Bind them at creation, or while the workspace is stopped or failed.
 
 ## Create a Volume
 
@@ -122,3 +122,34 @@ Available `VolumeStatus` constants: `VolumeStatusCreating`, `VolumeStatusAvailab
 Volume statuses follow native Kibotos 1:1 semantics: `WorkspaceID` expresses whether a volume is bound to a workspace; `VolumeStatusAvailable` means ready and not currently mounted to a running workspace (including volumes bound to a stopped/failed workspace); `VolumeStatusAttached` means actively mounted to a running workspace; `VolumeStatusLost` means the underlying storage pool was lost and data is unrecoverable.
 
 When `params.Timeout` is zero, `Wait` uses `ctx`'s deadline if set, or defaults to `30s`. Timeouts longer than `60s` automatically chunk across `<= 60s` server wait windows.
+
+## Attach Volumes to a Workspace
+
+Volume bindings are managed on the workspace. Set `Volumes` on `Workspaces.Create`, or replace the full list on a `stopped` or `failed` workspace with `Workspaces.SetVolumes`:
+
+```go
+ws, err := client.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
+	Template: kibotos.WorkspaceTemplateSpec{ID: "python-3.12"},
+	Zone:     vol.Zone,
+	Volumes: []kibotos.WorkspaceVolumeInput{
+		{ID: vol.ID, MountPath: "/data"},
+	},
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+// Replace the bindings later (the workspace must be stopped or failed)
+ws, err = client.Workspaces.SetVolumes(ctx, ws.ID, []kibotos.WorkspaceVolumeInput{
+	{ID: vol.ID, MountPath: "/data"},
+	{ID: "vol_cache", MountPath: "/cache"},
+})
+```
+
+| `WorkspaceVolumeInput` field | Type | Description |
+| --- | --- | --- |
+| `ID` | `string` | Volume ID. The volume must be unbound and in the workspace's zone. |
+| `MountPath` | `string` | Absolute mount path inside the workspace. |
+| `DeleteWithWorkspace` | `bool` | Delete the volume when the workspace is deleted. |
+
+A bound volume reports the workspace in `WorkspaceID`. See [Workspaces](./workspaces#attach-and-detach-volumes) for `SetVolumes` and the single-volume `AttachVolume` / `DetachVolume` methods.

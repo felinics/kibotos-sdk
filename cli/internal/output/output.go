@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/fatih/color"
+	"golang.org/x/term"
 )
 
 // Format identifies the CLI output encoding.
@@ -22,17 +23,21 @@ const (
 	FormatJSON  Format = "json"
 )
 
-var ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+var (
+	ansiRegexp = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	osc8Regexp = regexp.MustCompile("\x1b\\]8;;[^\x1b]*\x1b\\\\")
+)
 
 // Printer writes formatted results to stdout and progress/warnings to stderr.
 type Printer struct {
-	Out      io.Writer
-	Err      io.Writer
-	Format   Format
-	Quiet    bool
-	ColorOut bool
-	ColorErr bool
-	TTYErr   bool
+	Out       io.Writer
+	Err       io.Writer
+	Format    Format
+	Quiet     bool
+	ColorOut  bool
+	ColorErr  bool
+	TTYErr    bool
+	TermWidth int
 }
 
 // IsJSON reports whether the printer is configured for JSON output.
@@ -63,6 +68,24 @@ func (p *Printer) Bold(s string) string {
 // Dim renders s in faint/dim style for stdout when color is enabled.
 func (p *Printer) Dim(s string) string {
 	return style(p.ColorOut, color.Faint).Sprint(s)
+}
+
+// Link renders a URL as a clickable OSC 8 terminal hyperlink on stdout when color/TTY is enabled.
+func (p *Printer) Link(url string) string {
+	return formatLink(url, p.ColorOut)
+}
+
+// LinkErr renders a URL as a clickable OSC 8 terminal hyperlink on stderr when color/TTY is enabled.
+func (p *Printer) LinkErr(url string) string {
+	return formatLink(url, p.ColorErr)
+}
+
+func formatLink(url string, enabled bool) string {
+	if !enabled || url == "" {
+		return url
+	}
+	styled := style(true, color.FgCyan, color.Underline).Sprint(url)
+	return "\x1b]8;;" + url + "\x1b\\" + styled + "\x1b]8;;\x1b\\"
 }
 
 // FormatStatus returns a color-coded status string for human-readable stdout.
@@ -262,7 +285,17 @@ func (p *Printer) StartSpinner(msg string) func(finalMsg string, ok bool) {
 		if p.ColorErr {
 			f = style(true, color.FgCyan).Sprint(frame)
 		}
-		_, _ = fmt.Fprintf(p.Err, "\r\033[K%s %s %s", f, msg, style(p.ColorErr, color.Faint).Sprintf("(%s)", elapsed))
+		suffix := fmt.Sprintf("(%s)", elapsed)
+		displayMsg := msg
+		if width := p.errTermWidth(); width > 0 {
+			// Reserve 1 col at the right edge so the terminal never auto-wraps onto a second line.
+			budget := width - 1 - visibleWidth(frame) - 1 - 1 - visibleWidth(suffix)
+			if budget < 4 {
+				budget = 4
+			}
+			displayMsg = truncateRunes(msg, budget)
+		}
+		_, _ = fmt.Fprintf(p.Err, "\r\033[2K%s %s %s", f, displayMsg, style(p.ColorErr, color.Faint).Sprint(suffix))
 	}
 
 	mu.Lock()
@@ -295,7 +328,7 @@ func (p *Printer) StartSpinner(msg string) func(finalMsg string, ok bool) {
 			wg.Wait()
 			mu.Lock()
 			defer mu.Unlock()
-			_, _ = fmt.Fprint(p.Err, "\r\033[K")
+			_, _ = fmt.Fprint(p.Err, "\r\033[2K")
 			if finalMsg == "" {
 				return
 			}
@@ -321,8 +354,35 @@ func formatElapsed(d time.Duration) string {
 }
 
 func visibleWidth(s string) int {
-	plain := ansiRegexp.ReplaceAllString(s, "")
+	plain := osc8Regexp.ReplaceAllString(s, "")
+	plain = ansiRegexp.ReplaceAllString(plain, "")
 	return utf8.RuneCountInString(plain)
+}
+
+func (p *Printer) errTermWidth() int {
+	if p.TermWidth > 0 {
+		return p.TermWidth
+	}
+	if f, ok := p.Err.(interface{ Fd() uintptr }); ok {
+		if w, _, err := term.GetSize(int(f.Fd())); err == nil && w > 0 {
+			return w
+		}
+	}
+	return 80
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 // FormatTime formats a timestamp consistently in RFC3339 UTC.

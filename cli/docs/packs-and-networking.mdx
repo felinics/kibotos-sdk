@@ -33,7 +33,7 @@ kibo egress update egr_123 --address proxy-east.example.com:1080 --username app 
 kibo egress delete egr_123 --no-input --json
 ```
 
-Endpoint flags replace the complete SOCKS5 configuration. Supply credentials and TLS settings again when applicable. Use `--address` for the host and port, `--server-name` for a TLS server-name override, and `--ca-cert` for a PEM trust file. `--zone` and repeatable `--label` are optional creation flags.
+Endpoint flags replace the complete SOCKS5 configuration. Supply credentials and TLS settings again when applicable. Use `--address` for the host and port, `--password-env` to read the password from an environment variable (preferred over `--password`), `--tls` to connect over TLS, `--server-name` for a TLS server-name override, and `--ca-cert` for a PEM trust file of at most 64 KiB. `--udp-enabled` lets a UDP resolver send DNS through the egress. `--drain-seconds` (`0`–`3600`) applies to updates only. `--zone` and repeatable `--label` are optional creation flags. Update metadata (`--name`, `--clear-name`, `--label`, `--unset-label`) and the endpoint in separate invocations.
 
 ## DNS resolvers
 
@@ -62,6 +62,7 @@ kibo ws network wks_123 --mode public_internet \
   --egress egr_123=10.0.0.0/8 --resolver rsv_123=egr_123 --no-input --json
 ```
 
+A policy takes at most one `--egress` and one `--resolver`, and a resolver routed with `=egress_id` must name the egress from the same command.
 
 ## Edit one workspace network rule
 

@@ -58,16 +58,22 @@ asyncio.run(main())
 
 ## Workspace Configuration and Catalogs
 
-Workspace creation accepts `volumes`, Pack IDs in `packs`, and a `network` policy with `allow`, `deny`, `egresses`, and `resolvers`. Use `workspaces.update(workspace_id, resources={...})` to change CPU, memory, or grow the root disk of a stopped or failed workspace. Use `set_volumes` and `set_packs` to replace the complete lists. An empty list clears the corresponding bindings. Pack changes take effect on the next start. The legacy `volume` field and single-volume methods remain available.
+Workspace creation accepts `volumes`, Pack IDs in `packs`, and a `network` policy with `allow`, `deny`, `egresses`, and `resolvers`. Use `workspaces.update(workspace_id, resources={...})` to change CPU, memory, or grow the root disk of a stopped or failed workspace. Use `set_volumes` and `set_packs` to replace the complete lists. An empty list clears the corresponding bindings. A workspace binds up to four Packs, and Pack changes take effect on the next start. The legacy `volume` field and single-volume methods remain available. `attach_volume` leaves only the given volume attached and `detach_volume` removes every attachment, so use `set_volumes` on multi-volume workspaces.
 
-`set_network` also accepts `drain_seconds`. The response's `network.applied` is `None` while the workspace is inactive. `get_metrics(workspace_id, start=..., end=...)` accepts RFC 3339 strings or timezone-aware datetimes and returns host and guest time series.
+`set_network` replaces the whole policy and also accepts `drain_seconds`. The response's `network.applied` is `None` while the workspace is not running. `get_metrics(workspace_id, start=..., end=...)` accepts RFC 3339 strings or timezone-aware datetimes and returns host and guest time series.
 
 | Namespace | Methods |
 | --- | --- |
+| `client.zones` | `list`, `iterate` |
+| `client.templates` | `list`, `iterate`, `get`, `list_revisions`, `get_revision` |
+| `client.workspaces` | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `set_timeout`, `set_network`, `set_volumes`, `set_packs`, `get_metrics`, `attach_volume`, `detach_volume`, `wait` |
+| `client.workspaces` (data plane) | `exec`, `exec_stream`, `list_files`, `stat_file`, `read_file`, `write_file`, `make_dir`, `move_file`, `delete_file`, `ws_url`, `tunnel_ws_url`, `desktop_vnc_url`, `proxy_url`, `proxy_ws_url`, `ws_headers` |
+| `client.volumes` | `create`, `list`, `iterate`, `get`, `update`, `resize`, `delete`, `wait` |
+| `client.exposures` | `create`, `list`, `iterate`, `get`, `revoke` |
 | `client.packs` | `list`, `get`, `get_revision` |
 | `client.egresses`, `client.resolvers` | `create`, `list`, `get`, `replace` (configuration), `update` (name and labels), `delete` |
 
-For these catalogs, pass the response's `next_page_token` as `page_token` to fetch another page.
+Packs, egresses, and resolvers have no `iterate` helper. Pass the response's `next_page_token` as `page_token` to fetch another page.
 
 ## Commands and Files
 
@@ -129,7 +135,7 @@ Binary frames have a six-byte header with version `0x01`, a big-endian 32-bit st
 
 ### Reliability Features
 
-- **Idempotency**: Control-plane `POST` mutations automatically include a UUID v4 `Idempotency-Key` header (unless you pass `idempotency_key=...`) and reuse the same key across retries.
+- **Idempotency**: Control-plane `POST` mutations automatically include a UUID v4 `Idempotency-Key` header (unless you pass `idempotency_key=...`) and reuse the same key across retries. `exec`, `make_dir`, and `move_file` never send one.
 - **Retries & `Retry-After`**: Exponential backoff with jitter automatically honors server `Retry-After` headers on `429 RateLimitError`.
 - **One-shot data-plane requests**: `exec`, `exec_stream`, `read_file`, `write_file`, `make_dir`, `move_file`, and `delete_file` make a single attempt.
 - **Long Waits (`>60s`)**: `workspaces.wait()` and `volumes.wait()` automatically chunk timeouts longer than the server's 60-second long-poll maximum.
@@ -148,6 +154,10 @@ All exceptions inherit from `KibotosError`:
   - `RateLimitError` (429, includes `retry_after`)
   - `WaitTimeoutError` (408 `wait_timeout`)
 - `APIConnectionError` (network/transport failures)
+
+## Documentation
+
+Reference guides live in [`docs/`](./docs) and are published at [docs.kibo.to](https://docs.kibo.to): workspaces, volumes, exposures, exec / files / tunnels, Packs and networking, templates and zones, and errors and retries.
 
 ## Running Tests
 

@@ -3,12 +3,12 @@ title: Go SDK
 description: Install, configure, and get started with the official Go SDK for Kibotos.
 ---
 
-`github.com/felinics/kibotos-sdk/sdks/go` (`package kibotos`) is the official Go SDK for the **Kibotos** v1 API. The SDK supports idiomatic `context.Context` cancellation, functional options, generic `Nullable[T]` PATCH fields, and Go `iter.Seq2` pagination iterators.
+`github.com/felinics/kibotos-sdk/sdks/go` (`package kibotos`) is the official Go SDK for the **Kibotos** v1 API. It uses `context.Context` cancellation, functional options, generic `Nullable[T]` PATCH fields, and `iter.Seq2` pagination iterators, and covers the control plane (workspaces, volumes, exposures, Packs, egresses, resolvers) and the workspace data plane (exec, files, metrics, proxy, WebSocket sessions, tunnels, desktop).
 
 ## Requirements
 
 - **Go**: 1.24 or later
-- **WebSocket dependency** — `github.com/coder/websocket`
+- **Dependency**: `github.com/coder/websocket` (used by `DialWS`, `DialTunnel`, and `DialDesktopVNC`)
 
 ## Installation
 
@@ -24,7 +24,7 @@ Set `KIBOTOS_API_KEY` in your environment:
 export KIBOTOS_API_KEY="kb_..."
 ```
 
-Then create a workspace, wait until it is available, expose a port over HTTPS, and clean up:
+Then create a workspace, wait until it is available, run a command, expose a port over HTTPS, and clean up:
 
 ```go
 package main
@@ -78,7 +78,16 @@ func main() {
 	}
 	fmt.Printf("Workspace %s is %s in zone %s\n", ws.ID, ws.Status, ws.Zone)
 
-	// 3. Expose port 8080 over HTTPS
+	// 3. Run a command
+	result, err := client.Workspaces.Exec(ctx, ws.ID, kibotos.ExecRequest{
+		Argv: []string{"python3", "--version"},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Print(result.Stdout)
+
+	// 4. Expose port 8080 over HTTPS
 	exp, err := client.Exposures.Create(ctx, ws.ID, kibotos.CreateExposureParams{
 		Port:       8080,
 		TTLSeconds: 1800,
@@ -88,7 +97,7 @@ func main() {
 	}
 	fmt.Printf("Public URL: %s\n", exp.URL)
 
-	// 4. Clean up
+	// 5. Clean up
 	_, _ = client.Exposures.Revoke(ctx, ws.ID, exp.ID)
 	_, _ = client.Workspaces.Delete(ctx, ws.ID)
 }
@@ -131,15 +140,17 @@ When using `NewClientFromEnv(opts...)`, explicit options passed to `opts` take p
 
 | Service | Guide | Methods |
 | --- | --- | --- |
-| `client.Workspaces` | [Workspaces](./workspaces) | `Create`, `List`, `Iter`, `Get`, `Update`, `Delete`, `Start`, `Stop`, `SetTimeout`, `SetNetwork`, `SetVolumes`, `AttachVolume`, `DetachVolume`, `SetPacks`, `GetMetrics`, `Wait` |
-| `client.Workspaces` | Exec, files, proxy, and WebSockets | `Exec`, `ExecStream`, `ListFiles`, `StatFile`, `ReadFile`, `WriteFile`, `MakeDir`, `MoveFile`, `DeleteFile`, `Proxy`, `DialWS`, `DialTunnel`, `DialDesktopVNC` |
+| `client.Workspaces` | [Workspaces](./workspaces) | `Create`, `List`, `Iter`, `Get`, `Update`, `Delete`, `Start`, `Stop`, `SetTimeout`, `SetNetwork`, `SetVolumes`, `SetPacks`, `AttachVolume`, `DetachVolume`, `Wait` |
+| `client.Workspaces` | [Exec, Files & Tunnels](./exec-files-and-tunnels) | `Exec`, `ExecStream`, `ListFiles`, `StatFile`, `ReadFile`, `WriteFile`, `MakeDir`, `MoveFile`, `DeleteFile`, `GetMetrics`, `Proxy`, `DialWS`, `DialTunnel`, `DialDesktopVNC` |
 | `client.Volumes` | [Volumes](./volumes) | `Create`, `List`, `Iter`, `Get`, `Update`, `Resize`, `Delete`, `Wait` |
 | `client.Exposures` | [Exposures](./exposures) | `Create`, `List`, `Iter`, `Get`, `Revoke` |
 | `client.Templates` | [Templates & Zones](./templates-and-zones) | `List`, `Iter`, `Get`, `ListRevisions`, `GetRevision` |
 | `client.Zones` | [Templates & Zones](./templates-and-zones) | `List`, `Iter` |
-| `client.Packs` | Pack catalog | `List`, `Get`, `GetRevision` |
-| `client.Egresses` | Outbound SOCKS5 egresses | `Create`, `List`, `Get`, `Replace`, `Update`, `Delete` |
-| `client.Resolvers` | DNS resolvers | `Create`, `List`, `Get`, `Replace`, `Update`, `Delete` |
+| `client.Packs` | [Packs & Networking](./packs-and-networking) | `List`, `Get`, `GetRevision` |
+| `client.Egresses` | [Packs & Networking](./packs-and-networking) | `Create`, `List`, `Get`, `Replace`, `Update`, `Delete` |
+| `client.Resolvers` | [Packs & Networking](./packs-and-networking) | `Create`, `List`, `Get`, `Replace`, `Update`, `Delete` |
+
+`client.Packs`, `client.Egresses`, and `client.Resolvers` have no `Iter` method. Page through them with `List` and the returned page's `Token()`.
 
 ## Per-Request Options
 
@@ -147,5 +158,11 @@ Every service method accepts variadic `opts ...kibotos.RequestOption`:
 
 - `kibotos.WithIdempotencyKey(key string)` — Set an explicit `Idempotency-Key` header.
 - `kibotos.WithHeader(key, value string)` — Add a custom HTTP header to a single request.
+
+## Helpers
+
+- `kibotos.Ptr(v)` returns a pointer to `v`, for optional fields such as `DrainSeconds`, `Username`, or label values.
+- `kibotos.Some(v)` and `kibotos.Null[T]()` build `Nullable[T]` values for PATCH fields. The zero value omits the field.
+- `page.HasMore()` and `page.Token()` on `Page[T]` and `MultiZonePage[T]` report and return the next page token.
 
 See [Errors & Retries](./errors-and-retries) for `*kibotos.APIError` helpers, retry semantics, and idempotency details.

@@ -1,0 +1,420 @@
+---
+title: Exec, Files & Tunnels
+description: Run commands, stream output, transfer files, read metrics, proxy HTTP requests, and open WebSocket sessions, tunnels, and desktop connections on Kibotos workspaces in Go.
+---
+
+Data-plane methods live on `client.Workspaces` and need an `available` workspace. `GetMetrics` is the exception and also returns retained metrics for deleted workspaces.
+
+## Run a Command
+
+`client.Workspaces.Exec(ctx context.Context, workspaceID string, body ExecRequest, opts ...RequestOption) (*ExecResponse, error)`
+
+Runs a command once and returns its output (`POST /v1/workspaces/{id}/exec`). `Argv` runs directly, with no implicit shell. A non-zero exit code is part of the result and is not an error.
+
+```go
+result, err := client.Workspaces.Exec(ctx, "wks_01j9...", kibotos.ExecRequest{
+	Argv:           []string{"/bin/sh", "-c", "python3 main.py | tail -n 20"},
+	WorkingDir:     "/app",
+	Env:            map[string]string{"MODE": "test"},
+	TimeoutSeconds: 60,
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+fmt.Print(result.Stdout)
+if result.ExitCode != nil {
+	fmt.Println("exit code:", *result.ExitCode)
+}
+fmt.Println(result.TerminationReason, result.DurationMS, result.Truncated)
+```
+
+### `ExecRequest` Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `Argv` | `[]string` | Command and arguments. Use `[]string{"/bin/sh", "-c", "..."}` for shell syntax. |
+| `Env` | `map[string]string` | Extra environment variables. |
+| `WorkingDir` | `string` | Working directory. Defaults to the selected user's home. Relative paths resolve against it. |
+| `User` | `string` | Template default user when empty. Accepts a user declared by the template or `"root"`. |
+| `Stdin` | `*string` | Written to the process after it starts, then standard input is closed. |
+| `TimeoutSeconds` | `int` | Defaults to `30`. `Exec` accepts at most `600`. Use `ExecStream` or a WebSocket process for longer runs. |
+| `MaxOutputBytes` | `int` | Cap on combined stdout and stderr for `Exec`. Defaults to `1048576`, at most `4194304`. |
+
+### `ExecResponse` Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `ExitCode` | `*int` | Process exit code, or `nil`. |
+| `Signal` | `*int` | Number of the signal that ended the process, or `nil`. |
+| `TerminationReason` | `string` | `exited`, `signaled`, `timed_out`, `canceled`, `failed`, `memory_saturated`, or `out_of_memory`. |
+| `Stdout`, `Stderr` | `string` | Captured output. |
+| `Truncated` | `bool` | Output exceeded `MaxOutputBytes` and the remainder was dropped. |
+| `DurationMS` | `int64` | Run time in milliseconds. |
+
+`ExitCode`, `Signal`, and `TerminationReason` come from the embedded `ProcessExit` struct. Unless the client timeout is disabled, `Exec` bounds the request at the client timeout plus the command's `TimeoutSeconds` (or `30`).
+
+## Stream Command Output (SSE)
+
+`client.Workspaces.ExecStream(ctx context.Context, workspaceID string, body ExecRequest, handler func(ExecEvent) error, opts ...RequestOption) error`
+
+Sends the same request with `Accept: text/event-stream` and calls `handler` for each event as it arrives, with no output limit:
+
+```go
+var exit kibotos.ProcessExit
+
+err := client.Workspaces.ExecStream(ctx, "wks_01j9...", kibotos.ExecRequest{
+	Argv:           []string{"python3", "-u", "train.py"},
+	TimeoutSeconds: 900,
+}, func(event kibotos.ExecEvent) error {
+	switch event.Type {
+	case "started":
+		fmt.Fprintln(os.Stderr, "pid:", event.PID)
+	case "stdout":
+		fmt.Fprint(os.Stdout, event.Data)
+	case "stderr":
+		fmt.Fprint(os.Stderr, event.Data)
+	case "exited":
+		exit = event.ProcessExit
+	}
+	return nil
+})
+if err != nil {
+	log.Fatal(err)
+}
+if exit.ExitCode != nil {
+	fmt.Println("exit code:", *exit.ExitCode)
+}
+```
+
+| `event.Type` | Populated fields |
+| --- | --- |
+| `started` | `PID`, `Incarnation` |
+| `stdout`, `stderr` | `Data` |
+| `heartbeat` | — |
+| `exited` | `ExitCode`, `Signal`, `TerminationReason`, `DurationMS` |
+| `error` | `Error` (`*APIError`) |
+
+`event.Raw` holds the undecoded JSON payload of every event.
+
+- `ExecStream` returns `nil` after the `exited` event.
+- After an `error` event it calls `handler` and then returns the event's `*APIError`.
+- An error returned by `handler` stops the stream and is returned as-is.
+- A stream that ends before `exited` or `error` returns an error wrapping `io.ErrUnexpectedEOF`.
+
+The stream runs until `ctx` is done. Set a deadline on `ctx` to bound it.
+
+## Files
+
+Paths are absolute, or relative to the home directory of the selected user. Every file method takes a `User` option to act as another workspace user.
+
+```go
+id := "wks_01j9..."
+
+// Create a directory (file_exists when the path exists)
+_, err := client.Workspaces.MakeDir(ctx, id, kibotos.MakeDirectoryRequest{
+	Path: "/app/data",
+	Mode: "0755",
+})
+
+// Write a file from any io.Reader
+written, err := client.Workspaces.WriteFile(ctx, id, "/app/data/config.json",
+	strings.NewReader(`{"debug": true}`),
+	kibotos.WriteFileOptions{Mode: "0644", CreateOnly: true})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(written.Path, written.SizeBytes, written.SHA256)
+
+// List a directory two levels deep
+listing, err := client.Workspaces.ListFiles(ctx, id, "/app", kibotos.ListFilesOptions{Depth: 2})
+if err != nil {
+	log.Fatal(err)
+}
+for _, entry := range listing.Entries {
+	fmt.Println(entry.Type, entry.Mode, entry.SizeBytes, entry.Path)
+}
+
+// Inspect, move, and delete
+stat, err := client.Workspaces.StatFile(ctx, id, "/app/data/config.json", kibotos.FileOptions{})
+_, err = client.Workspaces.MoveFile(ctx, id, kibotos.MoveFileRequest{
+	Source:      "/app/data/config.json",
+	Destination: "/app/config.json",
+})
+err = client.Workspaces.DeleteFile(ctx, id, "/app/data", kibotos.FileOptions{})
+```
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `ListFiles(ctx, workspaceID, path, ListFilesOptions, opts...)` | `*FileList` | `Depth` sets how many directory levels to include. |
+| `StatFile(ctx, workspaceID, path, FileOptions, opts...)` | `*FileEntry` | `Path`, `Name`, `Type`, `Mode`, `SizeBytes`, `ModifiedAt`. |
+| `ReadFile(ctx, workspaceID, path, ReadFileOptions, opts...)` | `*FileContent` | See below. |
+| `WriteFile(ctx, workspaceID, path, input io.Reader, WriteFileOptions, opts...)` | `*FileWriteResult` | Creates or replaces the file. Body up to 1 GiB. `Mode` takes octal bits such as `"0644"`. `CreateOnly` fails with `file_exists` instead of replacing. |
+| `MakeDir(ctx, workspaceID, MakeDirectoryRequest, opts...)` | `*FileEntry` | `Path`, optional `Mode` and `User`. |
+| `MoveFile(ctx, workspaceID, MoveFileRequest, opts...)` | `*FileEntry` | `Source`, `Destination`, optional `User`. Moves or renames a file or directory. |
+| `DeleteFile(ctx, workspaceID, path, FileOptions, opts...)` | `error` | Deletes a file or directory. |
+
+### Read a File
+
+`ReadFile` returns a `*FileContent`: an `io.ReadCloser` with the HTTP `StatusCode`, `ContentLength`, and `Header`. Close it when done.
+
+```go
+// Whole file
+file, err := client.Workspaces.ReadFile(ctx, id, "/app/output.bin", kibotos.ReadFileOptions{})
+if err != nil {
+	log.Fatal(err)
+}
+defer file.Close()
+if _, err := io.Copy(dst, file); err != nil {
+	log.Fatal(err)
+}
+
+// Byte range: status 206 with Content-Range
+part, err := client.Workspaces.ReadFile(ctx, id, "/app/output.bin",
+	kibotos.ReadFileOptions{Range: "bytes=0-1048575"})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(part.StatusCode, part.Header.Get("Content-Range"))
+etag := part.Header.Get("ETag")
+part.Close()
+
+// Revalidate a cached copy: status 304 (empty body) when the ETag still matches
+check, err := client.Workspaces.ReadFile(ctx, id, "/app/output.bin",
+	kibotos.ReadFileOptions{IfNoneMatch: etag})
+if err != nil {
+	log.Fatal(err)
+}
+defer check.Close()
+if check.StatusCode != http.StatusNotModified {
+	// read the fresh content
+}
+```
+
+Use `Range` to fetch files larger than 1 GiB in parts.
+
+`ReadFile`, `WriteFile`, and `ExecStream` are bounded only by `ctx` (and any `Timeout` on a custom `http.Client`). `MakeDir`, `MoveFile`, and `DeleteFile` use the client timeout. `Exec`, `ExecStream`, `ReadFile`, `WriteFile`, `MakeDir`, `MoveFile`, and `DeleteFile` are sent once and never retried.
+
+## Metrics
+
+`client.Workspaces.GetMetrics(ctx context.Context, workspaceID string, options *WorkspaceMetricsOptions, opts ...RequestOption) (*WorkspaceMetrics, error)`
+
+Reads host and guest time series, including retained metrics for deleted workspaces. Pass `nil` for the default interval, or set `Start` and `End`.
+
+```go
+end := time.Now()
+metrics, err := client.Workspaces.GetMetrics(ctx, "wks_01j9...", &kibotos.WorkspaceMetricsOptions{
+	Start: end.Add(-time.Hour),
+	End:   end,
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+fmt.Println("step:", metrics.StepSeconds)
+for _, point := range metrics.Guest {
+	fmt.Println(point.Time, point.CPUUsedPercent, point.MemoryUsedBytes, point.DiskUsedBytes)
+}
+for _, point := range metrics.Host {
+	if point.CPUCores != nil {
+		fmt.Println(point.Time, *point.CPUCores)
+	}
+}
+```
+
+Guest points (`WorkspaceGuestMetricsPoint`) always carry `CPUCount`, `CPUUsedPercent`, `MemoryTotalBytes`, `MemoryUsedBytes`, `MemoryCacheBytes`, `DiskTotalBytes`, and `DiskUsedBytes`. Host fields (`WorkspaceHostMetricsPoint`: CPU cores, memory bytes, CPU / memory / IO pressure ratios, network rates) are pointers and `nil` when a measurement is unavailable. `EarliestTime` is a `*time.Time`.
+
+## Interactive Sessions over WebSocket
+
+`client.Workspaces.DialWS(ctx context.Context, workspaceID string, opts ...RequestOption) (*WorkspaceWS, error)`
+
+Opens the multiplexed workspace channel (`GET /v1/workspaces/{id}/ws`). `ctx` bounds the handshake only. Pass a lifetime context to `Read` and the write methods. One connection carries any number of streams, each identified by a positive stream ID you choose:
+
+| Open method | Kind | Purpose |
+| --- | --- | --- |
+| `OpenProcess(ctx, streamID, WSProcessParams)` | `process` | PTY terminals and pipe commands, with reattach. |
+| `OpenFSWatch(ctx, streamID, WSWatchParams)` | `fs.watch` | Directory change events. |
+| `OpenTunnel(ctx, streamID, WSTunnelParams)` | `tunnel` | Byte stream to a port or Unix socket in the workspace. |
+
+`Read` returns a `WSMessage` holding either a JSON `Control` event (`*WSControlEvent`) or a `Binary` frame (`*WSFrame` with `StreamID`, `Channel`, `Payload`). Use one reader and keep it running so WebSocket pings are answered. Writes may run concurrently.
+
+### Run a Process
+
+```go
+socket, err := client.Workspaces.DialWS(ctx, "wks_01j9...")
+if err != nil {
+	log.Fatal(err)
+}
+defer socket.CloseNow()
+
+const streamID = 1
+err = socket.OpenProcess(ctx, streamID, kibotos.WSProcessParams{
+	Action: "start",
+	Mode:   "pipe",
+	Argv:   []string{"cat"},
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+for {
+	message, err := socket.Read(ctx)
+	if err != nil {
+		log.Fatal(err) // io.EOF after a normal close
+	}
+	if frame := message.Binary; frame != nil {
+		switch frame.Channel {
+		case kibotos.WSChannelStdout:
+			os.Stdout.Write(frame.Payload)
+		case kibotos.WSChannelStderr:
+			os.Stderr.Write(frame.Payload)
+		}
+		continue
+	}
+
+	event := message.Control
+	switch event.Type {
+	case "opened":
+		_ = socket.WriteBinary(ctx, kibotos.WSFrame{
+			StreamID: streamID,
+			Channel:  kibotos.WSChannelStdin,
+			Payload:  []byte("hello\n"),
+		})
+		_ = socket.WriteControl(ctx, kibotos.WSControlRequest{Type: "close_stdin", StreamID: streamID})
+	case "exited":
+		if event.ExitCode != nil {
+			fmt.Println("exit code:", *event.ExitCode)
+		}
+		return
+	case "error":
+		log.Fatalf("%s: %s", event.Code, event.Message)
+	}
+}
+```
+
+`WSProcessParams` fields:
+
+| Field | Description |
+| --- | --- |
+| `Action` | `"start"` a new process or `"attach"` to a running one. |
+| `Mode` | `"pipe"` (separate stdin / stdout / stderr channels) or `"pty"` (one PTY channel). |
+| `Argv`, `Env`, `WorkingDir`, `User`, `TimeoutSeconds` | Same meaning as in `ExecRequest`. |
+| `Rows`, `Cols` | Initial terminal size for `"pty"`. |
+| `PID`, `Incarnation`, `ResumeFrom` | Identify the process for `"attach"`, with optional per-channel resume offsets. |
+
+### Open a Terminal (PTY)
+
+```go
+err = socket.OpenProcess(ctx, streamID, kibotos.WSProcessParams{
+	Action: "start",
+	Mode:   "pty",
+	Argv:   []string{"/bin/bash", "-l"},
+	Rows:   24,
+	Cols:   80,
+})
+
+// Keystrokes go in and terminal output comes back on the PTY channel
+err = socket.WriteBinary(ctx, kibotos.WSFrame{
+	StreamID: streamID,
+	Channel:  kibotos.WSChannelPTY,
+	Payload:  []byte("ls -la\n"),
+})
+
+// Follow terminal size changes, or interrupt the foreground process
+err = socket.WriteControl(ctx, kibotos.WSControlRequest{Type: "resize", StreamID: streamID, Rows: 40, Cols: 120})
+err = socket.WriteControl(ctx, kibotos.WSControlRequest{Type: "signal", StreamID: streamID, Signal: "SIGINT"})
+```
+
+### `WorkspaceWS` API
+
+| Method | Description |
+| --- | --- |
+| `OpenProcess`, `OpenFSWatch`, `OpenTunnel` | Send an `open` control for a stream. |
+| `WriteControl(ctx, WSControlRequest)` | Sends a JSON control: `resize` (`Rows`, `Cols`), `signal` (`Signal`), `close_stdin`, `close`, or `ping` (`Timestamp`). |
+| `WriteBinary(ctx, WSFrame)` | Sends stream bytes on a channel: `WSChannelStdin` (0), `WSChannelStdout` (1), `WSChannelStderr` (2), `WSChannelPTY` (3), `WSChannelTunnel` (4). |
+| `Read(ctx)` | Returns the next `WSMessage`. Returns `io.EOF` after a normal close. A single message is limited to 1 MiB. |
+| `Close()` / `CloseNow()` | Close with a normal closure handshake, or immediately. |
+
+Server control types are `opened`, `exited`, `fs.event`, `heartbeat`, `closed`, `error`, and `pong`. `WSControlEvent` carries `ExitCode`, `Signal`, and `TerminationReason` for `exited`, `Event`, `Path`, and `Entry` for `fs.event`, `Reason` for `closed`, and `Code`, `Message`, `Retryable`, and `Details` for `error`.
+
+Binary messages use a 6-byte header (version `0x01`, big-endian 32-bit stream ID, channel byte) followed by the payload. `WSFrame.MarshalBinary` and `kibotos.ParseWSFrame` encode and decode it for your own transport.
+
+Watch a directory or open a tunnel stream on the same connection:
+
+```go
+err = socket.OpenFSWatch(ctx, 2, kibotos.WSWatchParams{Path: "/app", IncludeEntry: true})
+err = socket.OpenTunnel(ctx, 3, kibotos.WSTunnelParams{
+	Target: kibotos.WSTunnelTarget{Type: "tcp", Port: 5432},
+})
+```
+
+## Tunnels, Proxy, and Desktop
+
+### Tunnel to a Port or Unix Socket
+
+`client.Workspaces.DialTunnel(ctx context.Context, workspaceID string, options TunnelOptions, opts ...RequestOption) (*BinarySocket, error)`
+
+Opens a WebSocket whose binary messages are the raw bytes of one connection to a TCP port or Unix socket in the workspace, with no multiplexing header. Set either `Port` (with optional `Family`, `"ipv4"` by default or `"ipv6"`) or an absolute `UnixPath`.
+
+```go
+tunnel, err := client.Workspaces.DialTunnel(ctx, "wks_01j9...", kibotos.TunnelOptions{Port: 5432})
+if err != nil {
+	log.Fatal(err)
+}
+defer tunnel.CloseNow()
+
+if err := tunnel.Write(ctx, []byte{0x00}); err != nil {
+	log.Fatal(err)
+}
+data, err := tunnel.Read(ctx) // io.EOF after a normal close
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println("received", len(data), "bytes")
+
+docker, err := client.Workspaces.DialTunnel(ctx, "wks_01j9...", kibotos.TunnelOptions{
+	UnixPath: "/var/run/docker.sock",
+})
+```
+
+`BinarySocket` has `Read(ctx)`, `Write(ctx, data)`, `Close()`, and `CloseNow()`. Use one reader to service incoming messages and pings.
+
+### Proxy to a Workspace Service
+
+`client.Workspaces.Proxy(ctx context.Context, workspaceID string, port int, method, path string, query url.Values, body io.Reader, opts ...RequestOption) (*http.Response, error)`
+
+Forwards an authenticated request to an HTTP service listening on a loopback port, without creating a public [exposure](./exposures). Pass an unescaped path and separate query parameters. An empty path targets the service root. Use `WithHeader` for request headers such as `Content-Type`.
+
+```go
+resp, err := client.Workspaces.Proxy(ctx, "wks_01j9...", 8080, http.MethodGet, "/api/health",
+	url.Values{"verbose": {"1"}}, nil)
+if err != nil {
+	log.Fatal(err)
+}
+defer resp.Body.Close()
+fmt.Println(resp.StatusCode)
+
+resp, err = client.Workspaces.Proxy(ctx, "wks_01j9...", 8080, http.MethodPost, "/api/jobs", nil,
+	strings.NewReader(`{"name":"nightly"}`),
+	kibotos.WithHeader("Content-Type", "application/json"))
+```
+
+`Proxy` returns the raw response for every HTTP status, without SDK retries and without following redirects. Close the response body.
+
+### Remote Desktop
+
+`client.Workspaces.DialDesktopVNC(ctx context.Context, workspaceID string, opts ...RequestOption) (*BinarySocket, error)`
+
+Opens a WebSocket carrying a standard RFB (VNC) stream of the workspace desktop, compatible with noVNC.
+
+```go
+vnc, err := client.Workspaces.DialDesktopVNC(ctx, "wks_01j9...")
+if err != nil {
+	log.Fatal(err) // 409 desktop_not_enabled without a desktop.v1 Pack
+}
+defer vnc.CloseNow()
+```
+
+The workspace needs a Pack that provides `desktop.v1`. See [Packs & Networking](./packs-and-networking#packs).
+
+`DialWS`, `DialTunnel`, and `DialDesktopVNC` bound the handshake with the client timeout and return a `*kibotos.APIError` when the server rejects the upgrade.

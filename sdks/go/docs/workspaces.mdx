@@ -1,9 +1,9 @@
 ---
 title: Workspaces
-description: Create, list, iterate with iter.Seq2, update with Nullable[T], start, stop, configure timeouts and networking, attach volumes, and wait for Kibotos workspaces in Go.
+description: Create, list, iterate with iter.Seq2, update with Nullable[T], resize, start, stop, configure timeouts, networking, volumes, and Packs, and wait for Kibotos workspaces in Go.
 ---
 
-Manage microVM workspaces via `client.Workspaces` (`*kibotos.WorkspacesService`).
+Manage microVM workspaces via `client.Workspaces` (`*kibotos.WorkspacesService`). Running commands, transferring files, and opening tunnels are covered in [Exec, Files & Tunnels](./exec-files-and-tunnels).
 
 ## Create a Workspace
 
@@ -26,12 +26,13 @@ ws, err := client.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
 	},
 	Network: &kibotos.WorkspaceNetworkSpec{
 		Mode: kibotos.NetworkModePublicInternet,
+		Deny: []string{"10.0.0.0/8"},
 	},
-	Volume: &kibotos.WorkspaceVolumeSpec{
-		ID:                  "vol_01j9...",
-		MountPath:           "/data",
-		DeleteWithWorkspace: false,
+	Volumes: []kibotos.WorkspaceVolumeInput{
+		{ID: "vol_data", MountPath: "/data"},
+		{ID: "vol_cache", MountPath: "/cache", DeleteWithWorkspace: true},
 	},
+	Packs: []string{"node-22"},
 	Timeout: &kibotos.TimeoutSpec{
 		Seconds: 3600,
 		Action:  kibotos.TimeoutActionStop,
@@ -42,6 +43,23 @@ ws, err := client.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
 	},
 }, kibotos.WithIdempotencyKey("ml-sandbox-create-1"))
 ```
+
+### `CreateWorkspaceParams` Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `Template` | `WorkspaceTemplateSpec` | Required `ID` and optional pinned `Revision`. |
+| `Name` | `string` | Human-readable workspace name. |
+| `Zone` | `string` | Target zone ID (defaults to the organization's default zone). |
+| `Resources` | `*WorkspaceResourcesSpec` | `VCPUs`, `MemoryMiB`, `DiskMiB` overrides. |
+| `Network` | `*WorkspaceNetworkSpec` | Outbound policy: `Mode` plus optional `Allow`, `Deny`, `Egresses`, `Resolvers`. See [Packs & Networking](./packs-and-networking#outbound-network-policy). |
+| `Volumes` | `[]WorkspaceVolumeInput` | Volumes to attach at creation. Each must be in the workspace's zone. |
+| `Volume` | `*WorkspaceVolumeSpec` | Legacy single-volume form of `Volumes`. |
+| `Packs` | `[]string` | Up to four unique Pack IDs. |
+| `Timeout` | `*TimeoutSpec` | Auto-timeout: `Seconds` and optional `Action`. |
+| `Labels` | `map[string]string` | Key-value metadata labels. |
+
+`CreateWorkspaceRequest` is an alias of `CreateWorkspaceParams`. The returned `Workspace` reports attachments in `Volumes` (and the legacy `Volume` field), bound Packs in `Packs` (`WorkspacePack` with `ID`, `Revision`, `ProvidedCapabilities`), and the active policy in `Network`.
 
 ## Wait for a Target Status
 
@@ -135,6 +153,28 @@ ws, err = client.Workspaces.Update(ctx, ws.ID, kibotos.UpdateWorkspaceParams{
 deleting, err := client.Workspaces.Delete(ctx, ws.ID)
 ```
 
+## Resize a Workspace
+
+`UpdateWorkspaceParams.Resources` resizes a workspace. It must be `stopped` or `failed` to change vCPUs or memory or to grow the root disk. The root disk cannot shrink. Zero-valued fields are left unchanged.
+
+```go
+_, err = client.Workspaces.Stop(ctx, ws.ID, nil)
+_, err = client.Workspaces.Wait(ctx, ws.ID, kibotos.WaitWorkspaceParams{
+	Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusStopped},
+	Timeout:  2 * time.Minute,
+})
+
+ws, err = client.Workspaces.Update(ctx, ws.ID, kibotos.UpdateWorkspaceParams{
+	Resources: &kibotos.WorkspaceResourcesInput{
+		VCPUs:     4,
+		MemoryMiB: 8192,
+		DiskMiB:   40960,
+	},
+})
+
+_, err = client.Workspaces.Start(ctx, ws.ID, nil)
+```
+
 ## Start and Stop
 
 ```go
@@ -150,7 +190,7 @@ _, err = client.Workspaces.Stop(ctx, ws.ID, &kibotos.StopWorkspaceParams{
 	Force: true,
 })
 
-// Start with an optional timeout override
+// Start a stopped or failed workspace with an optional timeout override
 _, err = client.Workspaces.Start(ctx, ws.ID, &kibotos.StartWorkspaceParams{
 	Timeout: &kibotos.TimeoutSpec{
 		Seconds: 7200,
@@ -161,6 +201,8 @@ _, err = client.Workspaces.Start(ctx, ws.ID, &kibotos.StartWorkspaceParams{
 
 ## Update Timeout Policy
 
+Resets the expiration policy on an available workspace:
+
 ```go
 ws, err = client.Workspaces.SetTimeout(ctx, ws.ID, kibotos.SetWorkspaceTimeoutParams{
 	Seconds: 7200,
@@ -169,6 +211,10 @@ ws, err = client.Workspaces.SetTimeout(ctx, ws.ID, kibotos.SetWorkspaceTimeoutPa
 ```
 
 ## Configure Outbound Network
+
+`client.Workspaces.SetNetwork(ctx context.Context, id string, params WorkspaceNetworkInput, opts ...RequestOption) (*Workspace, error)`
+
+Replaces the whole outbound policy (`PUT /v1/workspaces/{id}/network`). `Network.Applied` is `nil` while the workspace is not running and points to `true` once a running workspace has confirmed the policy.
 
 ```go
 ws, err = client.Workspaces.SetNetwork(ctx, ws.ID, kibotos.WorkspaceNetworkInput{
@@ -179,6 +225,8 @@ if ws.Network.Applied != nil {
 	fmt.Println(*ws.Network.Applied)
 }
 ```
+
+Allow and deny lists, egresses, resolvers, and `DrainSeconds` are covered in [Packs & Networking](./packs-and-networking#outbound-network-policy).
 
 ## Attach and Detach Volumes
 
@@ -193,17 +241,25 @@ ws, err = client.Workspaces.SetVolumes(ctx, ws.ID, []kibotos.WorkspaceVolumeInpu
 
 **Warning:** `AttachVolume` (`PUT /v1/workspaces/{id}/volume`) replaces all existing attachments with a single volume. `DetachVolume` (`DELETE /v1/workspaces/{id}/volume`) detaches all volumes. Use `SetVolumes` to add or remove individual bindings on a multi-volume workspace.
 
-## Proxy HTTP Requests
-
-`Proxy` forwards an authenticated request to a loopback port inside an available workspace. Supply an unescaped path and optional query parameters. Use an empty path for the service root.
-
 ```go
-resp, err := client.Workspaces.Proxy(ctx, ws.ID, 8080, http.MethodGet, "/health", nil, nil)
-if err != nil {
-	log.Fatal(err)
-}
-defer resp.Body.Close()
-fmt.Println(resp.StatusCode)
+ws, err = client.Workspaces.AttachVolume(ctx, ws.ID, kibotos.AttachVolumeParams{
+	ID:        "vol_01j9...",
+	MountPath: "/data",
+})
+ws, err = client.Workspaces.DetachVolume(ctx, ws.ID)
 ```
 
-The SDK returns the response for every HTTP status. It sends a request without SDK retries and leaves redirects to the caller.
+## Set Packs
+
+`client.Workspaces.SetPacks(ctx context.Context, workspaceID string, packs []string, opts ...RequestOption) (*Workspace, error)`
+
+Replaces the Pack list with up to four unique Pack IDs (`PUT /v1/workspaces/{id}/packs`). The change takes effect on the next start. An empty or nil slice clears the list.
+
+```go
+ws, err = client.Workspaces.SetPacks(ctx, ws.ID, []string{"node-22"})
+for _, pack := range ws.Packs {
+	fmt.Println(pack.ID, pack.Revision, pack.ProvidedCapabilities)
+}
+```
+
+Browse available Packs with `client.Packs`. See [Packs & Networking](./packs-and-networking#packs).

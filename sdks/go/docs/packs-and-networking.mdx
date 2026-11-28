@@ -1,0 +1,313 @@
+---
+title: Packs & Networking
+description: Browse Kibotos Packs, bind Packs and multiple volumes to workspaces, and configure outbound network policies, SOCKS5 egresses, and DNS resolvers in Go.
+---
+
+Covers the Pack catalog (`client.Packs`), workspace Pack and volume bindings, the outbound network policy, and the zoned network resources it references: SOCKS5 egresses (`client.Egresses`) and DNS resolvers (`client.Resolvers`).
+
+## Packs
+
+A Pack adds a capability, such as a language runtime or the remote desktop, to a workspace. `client.Packs` (`*kibotos.PacksService`) reads the platform catalog.
+
+```go
+// List Packs, optionally filtered by zone
+page, err := client.Packs.List(ctx, &kibotos.PackListParams{Zone: "global-1", Limit: 20})
+if err != nil {
+	log.Fatal(err)
+}
+for _, pack := range page.Data {
+	fmt.Println(pack.ID, pack.Version, pack.ProvidedCapabilities, pack.Zones)
+}
+
+// Inspect one Pack and an exact revision
+pack, err := client.Packs.Get(ctx, "node-22")
+if err != nil {
+	log.Fatal(err)
+}
+revision, err := client.Packs.GetRevision(ctx, "node-22", pack.DefaultRevision)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(revision.PackID, revision.ID, revision.Architecture)
+```
+
+| Method | Returns |
+| --- | --- |
+| `List(ctx, *PackListParams, opts...)` | `*MultiZonePage[Pack]`. `PackListParams` has `Zone`, `Limit`, `PageToken`. |
+| `Get(ctx, id, opts...)` | `*Pack` |
+| `GetRevision(ctx, packID, revisionID, opts...)` | `*PackRevision` |
+
+`Pack` fields: `ID`, `DisplayName`, `Description`, `DefaultRevision`, `Version`, `Architecture`, `GuestRequirements`, `ProvidedCapabilities`, `PublishedAt`, `Zones`. `PackRevision` replaces the display fields and `DefaultRevision` with `PackID`.
+
+There is no `Iter` method. Page with `Token()`:
+
+```go
+params := &kibotos.PackListParams{Limit: 50}
+for {
+	page, err := client.Packs.List(ctx, params)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, pack := range page.Data {
+		fmt.Println(pack.ID)
+	}
+	if !page.HasMore() {
+		break
+	}
+	params.PageToken = page.Token()
+}
+```
+
+### Bind Packs to a Workspace
+
+A workspace binds up to four unique Pack IDs. Set them at creation with `Packs`, or replace the list later with `SetPacks`. A new list takes effect on the next start, and an empty or nil slice clears it.
+
+```go
+created, err := client.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
+	Template: kibotos.WorkspaceTemplateSpec{ID: "debian"},
+	Packs:    []string{"node-22", "kibotos-desktop-env"},
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+updated, err := client.Workspaces.SetPacks(ctx, created.ID, []string{"node-22"})
+if err != nil {
+	log.Fatal(err)
+}
+for _, bound := range updated.Packs {
+	fmt.Println(bound.ID, bound.Revision, bound.ProvidedCapabilities)
+}
+```
+
+A Pack that provides `desktop.v1` enables the [remote desktop stream](./exec-files-and-tunnels#remote-desktop).
+
+## Multiple Volumes
+
+Attach several volumes at creation with `Volumes`, or replace the full binding list on a `stopped` or `failed` workspace with `SetVolumes`. Each volume must be in the workspace's zone.
+
+```go
+ws, err := client.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
+	Template: kibotos.WorkspaceTemplateSpec{ID: "python-3.12"},
+	Volumes: []kibotos.WorkspaceVolumeInput{
+		{ID: "vol_data", MountPath: "/data"},
+		{ID: "vol_cache", MountPath: "/cache", DeleteWithWorkspace: true},
+	},
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+// Later, with the workspace stopped: keep /data, drop /cache, add /models
+ws, err = client.Workspaces.SetVolumes(ctx, ws.ID, []kibotos.WorkspaceVolumeInput{
+	{ID: "vol_data", MountPath: "/data"},
+	{ID: "vol_models", MountPath: "/models"},
+})
+```
+
+`SetVolumes` replaces the list, so include every binding you want to keep. An empty or nil slice detaches all volumes. See [Volumes](./volumes) for the volume lifecycle.
+
+## Outbound Network Policy
+
+`WorkspaceNetworkInput` is accepted as `Network` on `Create` (`WorkspaceNetworkSpec` is an alias) and as the argument of `SetNetwork`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `Mode` | `NetworkMode` | `NetworkModePublicInternet` or `NetworkModeDenyAll`. |
+| `Allow` | `[]string` | IP addresses or CIDRs admitted even when `Deny` also covers them. |
+| `Deny` | `[]string` | IP addresses or CIDRs refused for outbound traffic. |
+| `Egresses` | `[]NetworkEgressRule` | At most one rule sending `Destinations` through an egress. |
+| `Resolvers` | `[]NetworkResolverRule` | At most one rule replacing the default DNS upstream. |
+| `DrainSeconds` | `*int` | `SetNetwork` only. Seconds (`0`–`3600`, default `600`) that connections moved by the change keep their old path. `kibotos.Ptr(0)` requests zero drain time. |
+
+```go
+ws, err := client.Workspaces.SetNetwork(ctx, "wks_01j9...", kibotos.WorkspaceNetworkInput{
+	Mode:         kibotos.NetworkModePublicInternet,
+	Deny:         []string{"10.0.0.0/8", "192.168.0.0/16"},
+	Allow:        []string{"10.1.2.3"},
+	DrainSeconds: kibotos.Ptr(60),
+})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(ws.Network.Mode, ws.Network.Deny)
+```
+
+`SetNetwork` replaces the whole policy. To change one list, read the current policy and send the merged result:
+
+```go
+current, err := client.Workspaces.Get(ctx, "wks_01j9...")
+if err != nil {
+	log.Fatal(err)
+}
+net := current.Network
+
+_, err = client.Workspaces.SetNetwork(ctx, current.ID, kibotos.WorkspaceNetworkInput{
+	Mode:      net.Mode,
+	Allow:     net.Allow,
+	Deny:      append(net.Deny, "198.51.100.0/24"),
+	Egresses:  net.Egresses,
+	Resolvers: net.Resolvers,
+})
+```
+
+`Network.Applied` (`*bool`) is `nil` while the workspace is not running. On a running workspace, poll `Get` until it points to `true` to confirm the policy is in effect.
+
+## SOCKS5 Egresses
+
+An egress is a SOCKS5 outbound proxy in a zone. Workspaces in the same zone can send selected destinations through it. Manage egresses with `client.Egresses` (`*kibotos.EgressesService`).
+
+```go
+// Create
+egress, err := client.Egresses.Create(ctx, kibotos.CreateEgressRequest{
+	Name:     "corp-proxy",
+	Zone:     "global-1",
+	Protocol: kibotos.EgressProtocolSocks5,
+	Socks5: kibotos.EgressSocks5Input{
+		Address:  "proxy.example.com:1080",
+		Username: kibotos.Ptr("app"),
+		Password: kibotos.Ptr(os.Getenv("PROXY_PASSWORD")),
+		TLS:      &kibotos.EgressTLSInput{ServerName: kibotos.Ptr("proxy.example.com")},
+	},
+	UDPEnabled: true,
+	Labels:     map[string]string{"team": "platform"},
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+// List and get
+page, err := client.Egresses.List(ctx, &kibotos.EgressListParams{
+	Zone:   "global-1",
+	Labels: map[string]string{"team": "platform"},
+})
+fetched, err := client.Egresses.Get(ctx, egress.ID)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(fetched.Socks5.Address, fetched.UDPEnabled, fetched.Revision)
+
+// Rename or relabel (Null clears the name; a nil label value deletes the key)
+_, err = client.Egresses.Update(ctx, egress.ID, kibotos.UpdateEgressRequest{
+	Name:   kibotos.Some("corp-proxy-east"),
+	Labels: map[string]*string{"team": nil},
+})
+
+// Replace the endpoint configuration
+_, err = client.Egresses.Replace(ctx, egress.ID, kibotos.ReplaceEgressRequest{
+	Protocol: kibotos.EgressProtocolSocks5,
+	Socks5: kibotos.EgressSocks5Input{
+		Address:  "proxy-east.example.com:1080",
+		Username: kibotos.Ptr("app"),
+		Password: kibotos.Ptr(os.Getenv("PROXY_PASSWORD")),
+	},
+	UDPEnabled:   true,
+	DrainSeconds: kibotos.Ptr(60),
+})
+
+// Delete
+err = client.Egresses.Delete(ctx, egress.ID)
+```
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `Create(ctx, CreateEgressRequest, opts...)` | `*Egress` | `Name`, `Zone`, and `Labels` are optional. |
+| `List(ctx, *EgressListParams, opts...)` | `*MultiZonePage[Egress]` | Filters: `Zone`, `Labels`. Pagination: `Limit`, `PageToken`. |
+| `Get(ctx, id, opts...)` | `*Egress` | |
+| `Replace(ctx, id, ReplaceEgressRequest, opts...)` | `*Egress` | Replaces protocol, endpoint, credentials, and `UDPEnabled`. Increments `Revision`. |
+| `Update(ctx, id, UpdateEgressRequest, opts...)` | `*Egress` | Changes `Name` and merge-patches `Labels`. |
+| `Delete(ctx, id, opts...)` | `error` | Returns `resource_in_use` (HTTP `409`) while a workspace policy references it. |
+
+- `Socks5.Address` is `host:port`.
+- `Socks5.Password` is write-only. It is never returned, so send it again on every `Replace`.
+- A non-nil `Socks5.TLS` connects to the endpoint over TLS. `ServerName` overrides the SNI and verified name (defaults to the endpoint host), and `CACert` supplies PEM trust roots that replace the system roots.
+- `UDPEnabled` lets a `udp` resolver send its queries through the egress. It is always sent, so set it on every `Create` and `Replace`.
+- `DrainSeconds` on `Replace` keeps established connections on the previous configuration (default `600`).
+- `UpdateEgressRequest` and `UpdateResolverRequest` are aliases of `NetworkResourceUpdate`. `EgressListParams` and `ResolverListParams` are aliases of `NetworkResourceListParams`.
+
+## DNS Resolvers
+
+A resolver is a custom DNS upstream in a zone. Manage resolvers with `client.Resolvers` (`*kibotos.ResolversService`). `Protocol` selects the upstream type, and exactly the matching field must be set:
+
+| `Protocol` | Field | Value |
+| --- | --- | --- |
+| `ResolverProtocolUDP` | `UDP: &ResolverAddress{Address}` | IP or `IP:port` (default port `53`). |
+| `ResolverProtocolTCP` | `TCP: &ResolverAddress{Address}` | IP or `IP:port` (default port `53`). |
+| `ResolverProtocolTLS` | `TLS: &ResolverAddress{Address}` | DNS over TLS. IP or hostname, with optional port (default `853`). |
+| `ResolverProtocolHTTPS` | `HTTPS: &ResolverHTTPS{URL}` | DNS over HTTPS endpoint, `https://host[:port]/path`. |
+
+```go
+// Create
+resolver, err := client.Resolvers.Create(ctx, kibotos.CreateResolverRequest{
+	Name:     "internal-dns",
+	Zone:     "global-1",
+	Protocol: kibotos.ResolverProtocolUDP,
+	UDP:      &kibotos.ResolverAddress{Address: "10.0.0.53"},
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+doh, err := client.Resolvers.Create(ctx, kibotos.CreateResolverRequest{
+	Protocol: kibotos.ResolverProtocolHTTPS,
+	HTTPS:    &kibotos.ResolverHTTPS{URL: "https://dns.example/dns-query"},
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+// List and get
+page, err := client.Resolvers.List(ctx, &kibotos.ResolverListParams{Zone: "global-1"})
+fetched, err := client.Resolvers.Get(ctx, resolver.ID)
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(fetched.Protocol, fetched.Revision)
+
+// Rename or relabel
+_, err = client.Resolvers.Update(ctx, resolver.ID, kibotos.UpdateResolverRequest{
+	Name: kibotos.Some("internal-dns-east"),
+})
+
+// Replace the upstream
+_, err = client.Resolvers.Replace(ctx, resolver.ID, kibotos.ReplaceResolverRequest{
+	Protocol: kibotos.ResolverProtocolTLS,
+	TLS:      &kibotos.ResolverAddress{Address: "dns.example:853"},
+})
+
+// Delete
+err = client.Resolvers.Delete(ctx, doh.ID)
+```
+
+`client.Resolvers` has the same six methods as `client.Egresses`, typed with `CreateResolverRequest`, `ResolverListParams`, `ReplaceResolverRequest`, `UpdateResolverRequest`, and `Resolver`. `Resolver` embeds `ReplaceResolverRequest`, so the upstream is read from `resolver.Protocol`, `resolver.UDP`, and so on. `Delete` returns `resource_in_use` (HTTP `409`) while a workspace policy references the resolver.
+
+## Attach Egresses and Resolvers to a Workspace
+
+Reference network resources by ID from the workspace policy. Both must be in the same zone and organization as the workspace.
+
+```go
+ws, err := client.Workspaces.SetNetwork(ctx, "wks_01j9...", kibotos.WorkspaceNetworkInput{
+	Mode: kibotos.NetworkModePublicInternet,
+	// Send these destinations through the egress
+	Egresses: []kibotos.NetworkEgressRule{
+		{EgressID: egress.ID, Destinations: []string{"10.0.0.0/8", "203.0.113.7"}},
+	},
+	// Replace the default DNS upstream, reaching it through the same egress
+	Resolvers: []kibotos.NetworkResolverRule{
+		{
+			ResolverID: resolver.ID,
+			Path:       kibotos.NetworkResolverPath{Type: "egress", EgressID: egress.ID},
+		},
+	},
+})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(ws.Network.Egresses, ws.Network.Resolvers)
+```
+
+- `Destinations` are IP addresses or CIDRs.
+- `NetworkResolverPath.Type` is `"direct"` or `"egress"`. With `"egress"`, `EgressID` must be the egress listed in the same policy's `Egresses`, and a `udp` resolver needs an egress with `UDPEnabled`.
+- The same fields work in `Network` on `Workspaces.Create`.
+
+Remove a reference by sending a policy without it. Egresses and resolvers can be deleted once no workspace policy references them.

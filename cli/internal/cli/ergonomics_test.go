@@ -303,19 +303,32 @@ func TestInteractiveGuidedFlowsAndConfirmations(t *testing.T) {
 	h.env["KIBOTOS_API_KEY"] = "kb_test_interactive_1234"
 	h.env["KIBOTOS_API_URL"] = srv.URL
 
-	// 1. Minimal interactive `kibo ws create`: only asks template + optional name (no verbose advanced prompts).
-	code, stdout, stderr := h.runInteractive("1\nquickbox\n", "ws", "create")
+	// 1. Minimal interactive `kibo ws create`: template + resource preset + optional name.
+	code, stdout, stderr := h.runInteractive("1\n2\nquickbox\n", "ws", "create")
 	if code != ExitOK {
 		t.Fatalf("interactive ws create failed: code=%d stderr=%s", code, stderr)
 	}
 	if lastCreate.Template.ID != "python-3.12" || lastCreate.Name != "quickbox" {
 		t.Fatalf("unexpected create params: %+v", lastCreate)
 	}
+	if lastCreate.Resources == nil || lastCreate.Resources.VCPUs != 2 || lastCreate.Resources.MemoryMiB != 4096 || lastCreate.Resources.DiskMiB != 0 {
+		t.Fatalf("expected 2c4g preset resources, got %+v", lastCreate.Resources)
+	}
 	if !strings.Contains(stdout, "wks_new") || !strings.Contains(stderr, "Hint: Expose a port") {
 		t.Fatalf("expected details and hint, stdout=%q stderr=%q", stdout, stderr)
 	}
 	if strings.Contains(stderr, "Customize") || strings.Contains(stderr, "Outbound network") || strings.Contains(stderr, "Timeout action") {
 		t.Fatalf("interactive ws create should stay minimal without advanced prompts, got stderr=%q", stderr)
+	}
+
+	// 1b. Interactive `kibo ws create` with custom resources.
+	code, _, stderr = h.runInteractive("1\n6\n3\n6G\n20G\ncustombox\n", "ws", "create")
+	if code != ExitOK {
+		t.Fatalf("interactive custom ws create failed: code=%d stderr=%s", code, stderr)
+	}
+	if lastCreate.Name != "custombox" || lastCreate.Resources == nil ||
+		lastCreate.Resources.VCPUs != 3 || lastCreate.Resources.MemoryMiB != 6144 || lastCreate.Resources.DiskMiB != 20480 {
+		t.Fatalf("unexpected custom resources create params: %+v", lastCreate)
 	}
 
 	// 2. Advanced options remain available directly via flags (with human-friendly units).

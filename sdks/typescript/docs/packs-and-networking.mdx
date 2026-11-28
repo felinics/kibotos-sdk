@@ -1,0 +1,241 @@
+---
+title: Packs & Networking
+description: Browse Kibotos Packs, bind Packs and multiple volumes to workspaces, and configure outbound network policies, SOCKS5 egresses, and DNS resolvers with @kibotos/sdk.
+---
+
+Covers the Pack catalog (`client.packs`), workspace Pack and volume bindings, the outbound network policy, and the zoned network resources it references: SOCKS5 egresses (`client.egresses`) and DNS resolvers (`client.resolvers`).
+
+## Packs
+
+A Pack adds a capability, such as a language runtime or the remote desktop, to a workspace. `client.packs` (`PacksResource`) reads the platform catalog.
+
+```ts
+import { Kibotos } from '@kibotos/sdk';
+
+const client = new Kibotos();
+
+// List Packs, optionally filtered by zone
+const page = await client.packs.list({ zone: 'global-1', limit: 20 });
+for (const pack of page.data) {
+  console.log(pack.id, pack.version, pack.provided_capabilities, pack.zones);
+}
+
+// Inspect one Pack and an exact revision
+const pack = await client.packs.get('node-22');
+const revision = await client.packs.getRevision('node-22', pack.default_revision);
+console.log(revision.pack_id, revision.id, revision.architecture);
+```
+
+| Method | Returns |
+| --- | --- |
+| `list(params?: ListPacksParams, opts?)` | `Promise<MultiZonePage<Pack>>`. `params` accepts `zone`, `limit`, `page_token`. |
+| `get(id, opts?)` | `Promise<Pack>` |
+| `getRevision(id, revisionId, opts?)` | `Promise<PackRevision>` |
+
+`Pack` fields: `id`, `display_name`, `description`, `default_revision`, `version`, `architecture`, `guest_requirements`, `provided_capabilities`, `published_at`, `zones`. `PackRevision` replaces the display fields and `default_revision` with `pack_id`.
+
+There is no `iterate` helper. Pass `page.next_page_token` as `page_token` to fetch the next page.
+
+### Bind Packs to a Workspace
+
+A workspace binds up to four unique Pack IDs. Set them at creation with `packs`, or replace the list later with `setPacks`. A new list takes effect on the next start, and an empty array clears it.
+
+```ts
+const created = await client.workspaces.create({
+  template: { id: 'debian' },
+  packs: ['node-22', 'kibotos-desktop-env'],
+});
+
+const updated = await client.workspaces.setPacks(created.id, { packs: ['node-22'] });
+for (const bound of updated.packs ?? []) {
+  console.log(bound.id, bound.revision, bound.provided_capabilities);
+}
+```
+
+A Pack that provides `desktop.v1` enables the [remote desktop stream](./exec-files-and-tunnels#remote-desktop).
+
+## Multiple Volumes
+
+Attach several volumes at creation with `volumes`, or replace the full binding list on a `'stopped'` or `'failed'` workspace with `setVolumes`. Each volume must be in the workspace's zone.
+
+```ts
+const ws = await client.workspaces.create({
+  template: { id: 'python-3.12' },
+  volumes: [
+    { id: 'vol_data', mount_path: '/data' },
+    { id: 'vol_cache', mount_path: '/cache', delete_with_workspace: true },
+  ],
+});
+
+// Later, with the workspace stopped: keep /data, drop /cache, add /models
+await client.workspaces.setVolumes(ws.id, {
+  volumes: [
+    { id: 'vol_data', mount_path: '/data' },
+    { id: 'vol_models', mount_path: '/models' },
+  ],
+});
+```
+
+`setVolumes` replaces the list, so include every binding you want to keep. An empty array detaches all volumes. See [Volumes](./volumes) for the volume lifecycle.
+
+## Outbound Network Policy
+
+`WorkspaceNetworkInput` is accepted as `network` on `create` and as the body of `setNetwork`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `mode` | `'public_internet' \| 'deny_all'` | Base outbound mode. |
+| `allow` | `string[]` | IP addresses or CIDRs admitted even when `deny` also covers them. |
+| `deny` | `string[]` | IP addresses or CIDRs refused for outbound traffic. |
+| `egresses` | `NetworkEgressRule[]` | At most one rule sending `destinations` through an egress: `{ egress_id, destinations }`. |
+| `resolvers` | `NetworkResolverRule[]` | At most one rule replacing the default DNS upstream: `{ resolver_id, path }`. |
+| `drain_seconds` | `number` | `setNetwork` only. Seconds (`0`–`3600`, default `600`) that connections moved by the change keep their old path. |
+
+```ts
+const ws = await client.workspaces.setNetwork('wks_01j9...', {
+  mode: 'public_internet',
+  deny: ['10.0.0.0/8', '192.168.0.0/16'],
+  allow: ['10.1.2.3'],
+  drain_seconds: 60,
+});
+console.log(ws.network.mode, ws.network.deny, ws.network.applied);
+```
+
+`setNetwork` replaces the whole policy. To change one list, read the current policy, drop the read-only `applied` field, and send the merged result:
+
+```ts
+const current = await client.workspaces.get('wks_01j9...');
+const { applied, ...policy } = current.network;
+
+await client.workspaces.setNetwork(current.id, {
+  ...policy,
+  deny: [...(policy.deny ?? []), '198.51.100.0/24'],
+});
+```
+
+`network.applied` is `null` while the workspace is not running. On a running workspace, poll `get` until it is `true` to confirm the policy is in effect.
+
+## SOCKS5 Egresses
+
+An egress is a SOCKS5 outbound proxy in a zone. Workspaces in the same zone can send selected destinations through it. Manage egresses with `client.egresses` (`EgressesResource`).
+
+```ts
+// Create
+const egress = await client.egresses.create({
+  name: 'corp-proxy',
+  zone: 'global-1',
+  protocol: 'socks5',
+  socks5: {
+    address: 'proxy.example.com:1080',
+    username: 'app',
+    password: process.env.PROXY_PASSWORD,
+    tls: { server_name: 'proxy.example.com' },
+  },
+  udp_enabled: true,
+  labels: { team: 'platform' },
+});
+
+// List and get
+const page = await client.egresses.list({ zone: 'global-1', labels: { team: 'platform' } });
+const fetched = await client.egresses.get(egress.id);
+console.log(fetched.socks5.address, fetched.udp_enabled, fetched.revision);
+
+// Rename or relabel (null clears the name or deletes a label)
+await client.egresses.update(egress.id, { name: 'corp-proxy-east', labels: { team: null } });
+
+// Replace the endpoint configuration
+await client.egresses.replace(egress.id, {
+  protocol: 'socks5',
+  socks5: {
+    address: 'proxy-east.example.com:1080',
+    username: 'app',
+    password: process.env.PROXY_PASSWORD,
+  },
+  udp_enabled: true,
+  drain_seconds: 60,
+});
+
+// Delete
+await client.egresses.delete(egress.id);
+```
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `create(body: CreateEgressRequest, opts?)` | `Promise<Egress>` | `name`, `zone`, and `labels` are optional. |
+| `list(params?: ListEgressesParams, opts?)` | `Promise<MultiZonePage<Egress>>` | Filters: `zone`, `labels`. Pagination: `limit`, `page_token`. |
+| `get(id, opts?)` | `Promise<Egress>` | |
+| `replace(id, body: ReplaceEgressRequest, opts?)` | `Promise<Egress>` | Replaces protocol, endpoint, credentials, and `udp_enabled`. Increments `revision`. |
+| `update(id, body: UpdateEgressRequest, opts?)` | `Promise<Egress>` | Changes `name` and merge-patches `labels`. |
+| `delete(id, opts?)` | `Promise<void>` | Throws `ConflictError` (`resource_in_use`) while a workspace policy references it. |
+
+- `socks5.address` is `host:port`.
+- `socks5.password` is write-only. It is never returned, so send it again on every `replace`.
+- Setting `socks5.tls` connects to the endpoint over TLS. `server_name` overrides the SNI and verified name (defaults to the endpoint host), and `ca_cert` supplies PEM trust roots that replace the system roots.
+- `udp_enabled` lets a `udp` resolver send its queries through the egress.
+- `drain_seconds` on `replace` keeps established connections on the previous configuration (default `600`).
+
+## DNS Resolvers
+
+A resolver is a custom DNS upstream in a zone. Manage resolvers with `client.resolvers` (`ResolversResource`). `protocol` selects the upstream type, and exactly the matching branch must be set:
+
+| `protocol` | Branch | Value |
+| --- | --- | --- |
+| `'udp'` | `udp: { address }` | IP or `IP:port` (default port `53`). |
+| `'tcp'` | `tcp: { address }` | IP or `IP:port` (default port `53`). |
+| `'tls'` | `tls: { address }` | DNS over TLS. IP or hostname, with optional port (default `853`). |
+| `'https'` | `https: { url }` | DNS over HTTPS endpoint, `https://host[:port]/path`. |
+
+```ts
+// Create
+const resolver = await client.resolvers.create({
+  name: 'internal-dns',
+  zone: 'global-1',
+  protocol: 'udp',
+  udp: { address: '10.0.0.53' },
+});
+
+const doh = await client.resolvers.create({
+  protocol: 'https',
+  https: { url: 'https://dns.example/dns-query' },
+});
+
+// List and get
+const page = await client.resolvers.list({ zone: 'global-1' });
+const fetched = await client.resolvers.get(resolver.id);
+console.log(fetched.protocol, fetched.udp?.address, fetched.revision);
+
+// Rename or relabel
+await client.resolvers.update(resolver.id, { name: 'internal-dns-east' });
+
+// Replace the upstream
+await client.resolvers.replace(resolver.id, {
+  protocol: 'tls',
+  tls: { address: 'dns.example:853' },
+});
+
+// Delete
+await client.resolvers.delete(doh.id);
+```
+
+`client.resolvers` has the same six methods as `client.egresses`, typed with `CreateResolverRequest`, `ListResolversParams`, `ReplaceResolverRequest`, `UpdateResolverRequest`, and `Resolver`. `delete` throws `ConflictError` (`resource_in_use`) while a workspace policy references the resolver.
+
+## Attach Egresses and Resolvers to a Workspace
+
+Reference network resources by ID from the workspace policy. Both must be in the same zone and organization as the workspace.
+
+```ts
+const ws = await client.workspaces.setNetwork('wks_01j9...', {
+  mode: 'public_internet',
+  // Send these destinations through the egress
+  egresses: [{ egress_id: egress.id, destinations: ['10.0.0.0/8', '203.0.113.7'] }],
+  // Replace the default DNS upstream, reaching it through the same egress
+  resolvers: [{ resolver_id: resolver.id, path: { type: 'egress', egress_id: egress.id } }],
+});
+console.log(ws.network.egresses, ws.network.resolvers);
+```
+
+- `destinations` are IP addresses or CIDRs.
+- A resolver `path` is `{ type: 'direct' }` or `{ type: 'egress', egress_id }`. The egress must be the one listed in the same policy's `egresses`, and a `udp` resolver needs an egress with `udp_enabled`.
+- The same fields work in `network` on `workspaces.create`.
+
+Remove a reference by sending a policy without it. Egresses and resolvers can be deleted once no workspace policy references them.

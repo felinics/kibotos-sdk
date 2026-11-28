@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -315,13 +316,21 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 			}
 
 			// Minimal interactive flow when --template was omitted in a TTY:
-			// only ask for template and optional name; advanced options stay on flags.
+			// ask for template, compute preset, and optional name; advanced options stay on flags.
 			if tplID == "" {
 				tpl, err := a.resolveTemplate(ctx, client, strings.TrimSpace(zone))
 				if err != nil {
 					return err
 				}
 				tplID = tpl.ID
+
+				if !cmd.Flags().Changed("vcpus") && !cmd.Flags().Changed("memory") && !cmd.Flags().Changed("disk") {
+					pickedVCPUs, pickedMem, pickedDisk, err := a.promptWorkspaceResources()
+					if err != nil {
+						return err
+					}
+					vcpus, memMiB, diskMiB = pickedVCPUs, pickedMem, pickedDisk
+				}
 
 				if !cmd.Flags().Changed("name") {
 					enteredName, err := a.prompter().Input("Name (optional)", "", func(v string) error {
@@ -409,16 +418,17 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 
 			p := a.printer()
 			if shouldWait && ws.Status != kibotos.WorkspaceStatusAvailable {
-				stopSpin := p.StartSpinner(fmt.Sprintf("Waiting for workspace %s to reach available...", ws.ID))
-				ws, err = client.Workspaces.Wait(ctx, ws.ID, kibotos.WaitWorkspaceParams{
+				wsID := ws.ID
+				stopSpin := p.StartSpinner(fmt.Sprintf("Waiting for workspace %s to reach available...", wsID))
+				ws, err = client.Workspaces.Wait(ctx, wsID, kibotos.WaitWorkspaceParams{
 					Statuses: []kibotos.WorkspaceStatus{kibotos.WorkspaceStatusAvailable},
 					Timeout:  waitDur,
 				})
 				if err != nil {
-					stopSpin(fmt.Sprintf("Workspace %s did not reach available", ws.ID), false)
+					stopSpin(fmt.Sprintf("Workspace %s did not reach available", wsID), false)
 					return err
 				}
-				stopSpin(fmt.Sprintf("Workspace %s is available", ws.ID), true)
+				stopSpin(fmt.Sprintf("Workspace %s is available", wsID), true)
 			}
 
 			if err := a.renderWorkspace(ws); err != nil {
@@ -427,7 +437,7 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 			if enableDesktop || hasDesktopCapability(ws) {
 				desktopURL := buildDesktopURL(resolveConsoleURL(consoleURL, res), ws.ID, res.OrganizationID)
 				if !p.IsJSON() && !p.IsQuiet() {
-					if _, err := fmt.Fprintf(p.Out, "Desktop URL: %s\n", desktopURL); err != nil {
+					if _, err := fmt.Fprintf(p.Out, "Desktop URL: %s\n", p.Link(desktopURL)); err != nil {
 						return err
 					}
 				}
@@ -1300,4 +1310,68 @@ func collectAllWorkspaces(ctx context.Context, client *kibotos.Client, base *kib
 		Data:             all,
 		UnavailableZones: unavail,
 	}, nil
+}
+
+func (a *App) promptWorkspaceResources() (int, int, int, error) {
+	options := []prompt.Option{
+		{Value: "2c2g", Label: "2c2g", Description: "2 vCPU, 2 GiB RAM"},
+		{Value: "2c4g", Label: "2c4g", Description: "2 vCPU, 4 GiB RAM"},
+		{Value: "4c4g", Label: "4c4g", Description: "4 vCPU, 4 GiB RAM"},
+		{Value: "4c8g", Label: "4c8g", Description: "4 vCPU, 8 GiB RAM"},
+		{Value: "8c16g", Label: "8c16g", Description: "8 vCPU, 16 GiB RAM"},
+		{Value: "custom", Label: "custom", Description: "Enter vCPUs, memory, and disk"},
+	}
+	choice, err := a.prompter().Select("Select resources:", "Resources", options, 0)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	switch choice.Value {
+	case "2c2g":
+		return 2, 2048, 0, nil
+	case "2c4g":
+		return 2, 4096, 0, nil
+	case "4c4g":
+		return 4, 4096, 0, nil
+	case "4c8g":
+		return 4, 8192, 0, nil
+	case "8c16g":
+		return 8, 16384, 0, nil
+	default:
+		vcpuStr, err := a.prompter().Input("vCPUs", "2", func(v string) error {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil {
+				return fmt.Errorf("vCPUs must be a positive integer")
+			}
+			return validateVCPUs(n)
+		})
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		vcpus, _ := strconv.Atoi(strings.TrimSpace(vcpuStr))
+
+		memStr, err := a.prompter().Input("Memory (e.g. 2G, 4096M)", "2G", func(v string) error {
+			_, err := parseWorkspaceMemoryMiB(v)
+			return err
+		})
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		memMiB, _ := parseWorkspaceMemoryMiB(memStr)
+
+		diskStr, err := a.prompter().Input("Disk (optional, e.g. 10G)", "", func(v string) error {
+			if strings.TrimSpace(v) == "" {
+				return nil
+			}
+			_, err := parseWorkspaceDiskMiB(v)
+			return err
+		})
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		var diskMiB int
+		if strings.TrimSpace(diskStr) != "" {
+			diskMiB, _ = parseWorkspaceDiskMiB(diskStr)
+		}
+		return vcpus, memMiB, diskMiB, nil
+	}
 }

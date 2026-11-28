@@ -3,15 +3,15 @@ title: TypeScript SDK
 description: Install, configure, and get started with @kibotos/sdk — the official zero-dependency TypeScript and JavaScript SDK for Kibotos.
 ---
 
-`@kibotos/sdk` is the official zero-dependency TypeScript and JavaScript SDK for the **Kibotos** v1 API. Built strictly on standard Web APIs (`fetch`, `URL`, `URLSearchParams`, `AbortController`, `AbortSignal.timeout`, and `crypto.randomUUID`), it runs across server and edge runtimes without polyfills.
+`@kibotos/sdk` is the official zero-dependency TypeScript and JavaScript SDK for the **Kibotos** v1 API. It is built on standard Web APIs (`fetch`, `ReadableStream`, `AbortSignal`, `WebSocket`, `crypto.randomUUID`) and covers the control plane (workspaces, volumes, exposures, Packs, egresses, resolvers) and the workspace data plane (exec, files, metrics, tunnels, proxy, desktop).
 
 ## Requirements & Runtime Compatibility
 
 - **Node.js**: 20.0.0 or later
-- **Bun**: Supported natively
-- **Deno**: Supported natively
-- **Cloudflare Workers & Edge Runtimes**: Supported natively (safe `process.env` probing; pass `apiKey` explicitly from worker bindings)
+- **Bun**, **Deno**, **Cloudflare Workers**, and other edge runtimes with global `fetch`
 - **Module formats**: Dual ESM (`import`) and CommonJS (`require`) with bundled `.d.ts` / `.d.cts` type definitions
+
+The HTTP API works in every runtime above. Authenticated WebSocket helpers (`connectWS`, `connectTunnel`, `connectDesktop`, `connectProxy`) use Node's built-in `WebSocket` and need a `factory` option in runtimes whose `WebSocket` cannot send handshake headers. See [WebSocket runtime support](./exec-files-and-tunnels#websocket-runtime-support).
 
 ## Installation
 
@@ -35,14 +35,14 @@ Set `KIBOTOS_API_KEY` in your environment (or pass `apiKey` to `new Kibotos(...)
 export KIBOTOS_API_KEY="kb_..."
 ```
 
-Then create a workspace, wait until it is available, expose a port over HTTPS, and clean up:
+Create a workspace, run a command in it, expose a port, and clean up:
 
 ```ts
 import { Kibotos } from '@kibotos/sdk';
 
 const client = new Kibotos();
 
-// 1. Create a workspace (asynchronous; returns initial Workspace)
+// 1. Create a workspace (asynchronous; returns the initial Workspace)
 const created = await client.workspaces.create({
   name: 'agent-runner',
   template: { id: 'python-3.12' },
@@ -51,21 +51,27 @@ const created = await client.workspaces.create({
   labels: { env: 'dev' },
 });
 
-// 2. Wait until the workspace reaches available (auto-chunks timeouts > 60s)
+// 2. Wait until it is available (timeouts over 60s are chunked automatically)
 const workspace = await client.workspaces.wait(created.id, {
   status: ['available', 'failed'],
   timeoutSeconds: 120,
 });
 console.log('Workspace ready:', workspace.id, workspace.status);
 
-// 3. Expose port 8080 on a temporary HTTPS URL
+// 3. Run a command
+const result = await client.workspaces.exec(workspace.id, {
+  argv: ['python3', '--version'],
+});
+console.log(result.exit_code, result.stdout);
+
+// 4. Expose port 8080 on a temporary HTTPS URL
 const exposure = await client.exposures.create(workspace.id, {
   port: 8080,
   ttl_seconds: 3600,
 });
 console.log('Public URL:', exposure.url);
 
-// 4. Clean up
+// 5. Clean up
 await client.exposures.revoke(workspace.id, exposure.id);
 await client.workspaces.delete(workspace.id);
 ```
@@ -92,29 +98,35 @@ const client = new Kibotos({
 | Option | Type | Env Fallback | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey` | `string` | `KIBOTOS_API_KEY` | `undefined` | Organization API key (`kb_...`). Sent as `Authorization: Bearer <apiKey>`. |
-| `baseUrl` | `string` | `KIBOTOS_API_URL` | `'https://api.kibo.to/v1'` | API base URL. Trailing slashes are trimmed and `/v1` is normalized automatically. |
+| `baseUrl` | `string` | `KIBOTOS_API_URL` | `'https://api.kibo.to/v1'` | API base URL. Trailing slashes are trimmed and `/v1` is appended when missing. |
 | `maxRetries` | `number` | — | `3` | Maximum retry attempts for retryable API errors, HTTP `429`/`5xx`, and network errors. Set `0` to disable retries. |
 | `timeoutMs` | `number` | — | `30000` | Default per-request HTTP timeout in milliseconds. |
 | `fetch` | `typeof globalThis.fetch` | — | `globalThis.fetch` | Custom `fetch` implementation for testing or custom runtimes. |
-| `defaultHeaders` | `Record<string, string>` | — | `{}` | Additional headers merged into every request. |
+| `defaultHeaders` | `Record<string, string>` | — | `{}` | Additional headers merged into every request and WebSocket handshake. |
 
-You can inspect the normalized base URL via the read-only `client.baseUrl` getter (always ending in `/v1`).
+The read-only `client.baseUrl` getter returns the normalized base URL (always ending in `/v1`).
 
-> **Cloudflare Workers and browser-like runtimes**: Because `process.env` is unavailable in Workers, read the secret from your worker `env` binding and pass `new Kibotos({ apiKey: env.KIBOTOS_API_KEY })`.
+> **Cloudflare Workers and browser-like runtimes**: `process.env` is unavailable, so read the secret from your worker `env` binding and pass `new Kibotos({ apiKey: env.KIBOTOS_API_KEY })`.
 
 ## Resource Namespaces
 
 | Namespace | Guide | Methods |
 | --- | --- | --- |
-| `client.workspaces` | [Workspaces](./workspaces) | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `setTimeout`, `setNetwork`, `attachVolume`, `detachVolume`, `wait` |
+| `client.workspaces` | [Workspaces](./workspaces) | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `setTimeout`, `setNetwork`, `setVolumes`, `setPacks`, `attachVolume`, `detachVolume`, `wait` |
+| `client.workspaces` | [Exec, Files & Tunnels](./exec-files-and-tunnels) | `exec`, `execStream`, `listFiles`, `statFile`, `readFile`, `writeFile`, `makeDir`, `moveFile`, `deleteFile`, `getMetrics`, `connectWS`, `connectTunnel`, `connectDesktop`, `connectProxy`, `wsUrl`, `tunnelWSUrl`, `desktopVNCUrl`, `proxyUrl`, `proxyWSUrl`, `wsHeaders` |
 | `client.volumes` | [Volumes](./volumes) | `create`, `list`, `iterate`, `get`, `update`, `resize`, `delete`, `wait` |
 | `client.exposures` | [Exposures](./exposures) | `create`, `list`, `iterate`, `get`, `revoke` |
+| `client.packs` | [Packs & Networking](./packs-and-networking) | `list`, `get`, `getRevision` |
+| `client.egresses` | [Packs & Networking](./packs-and-networking) | `create`, `list`, `get`, `replace`, `update`, `delete` |
+| `client.resolvers` | [Packs & Networking](./packs-and-networking) | `create`, `list`, `get`, `replace`, `update`, `delete` |
 | `client.templates` | [Templates & Zones](./templates-and-zones) | `list`, `iterate`, `get`, `listRevisions`, `getRevision` |
 | `client.zones` | [Templates & Zones](./templates-and-zones) | `list`, `iterate` |
 
+`client.packs`, `client.egresses`, and `client.resolvers` have no `iterate` helper. Pass `next_page_token` from the previous page as `page_token`.
+
 ## Per-Request Options
 
-Every resource method accepts an optional trailing `opts?: RequestOptions` argument:
+Every HTTP method accepts an optional trailing `opts?: RequestOptions` argument:
 
 ```ts
 interface RequestOptions {
@@ -125,4 +137,12 @@ interface RequestOptions {
 }
 ```
 
-See [Errors & Retries](./errors-and-retries) for details on automatic retries, `Idempotency-Key` handling, and request cancellation with `AbortSignal`.
+File methods extend it with a workspace `user` (`FileOptions`), plus `depth` for listings, `range` / `ifNoneMatch` / `as` for reads, and `mode` / `createOnly` for writes.
+
+All request, response, and option types are exported from the package root:
+
+```ts
+import type { CreateWorkspaceRequest, ExecResponse, Workspace } from '@kibotos/sdk';
+```
+
+See [Errors & Retries](./errors-and-retries) for automatic retries, `Idempotency-Key` handling, and cancellation with `AbortSignal`.

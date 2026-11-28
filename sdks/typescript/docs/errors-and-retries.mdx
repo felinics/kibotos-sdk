@@ -3,7 +3,7 @@ title: Errors & Retries
 description: Handle typed KibotosError subclasses, automatic retries, Retry-After backoff, Idempotency-Key safety, and AbortSignal cancellation in @kibotos/sdk.
 ---
 
-`@kibotos/sdk` provides typed errors, safe automatic retries for transient failures, automatic `Idempotency-Key` generation on `POST` mutations, and first-class `AbortSignal` support.
+`@kibotos/sdk` throws typed errors, retries transient failures, generates `Idempotency-Key` headers for `POST` mutations, and supports cancellation with `AbortSignal`.
 
 ## Error Hierarchy
 
@@ -35,6 +35,18 @@ KibotosError
 | `headers` | `Headers \| undefined` | Raw HTTP response headers. |
 
 `RateLimitError` additionally exposes `retryAfterMs: number | undefined`, parsed from the response's `Retry-After` header (supporting both delta-seconds and HTTP-date formats).
+
+### Common Error Codes
+
+| Code | Class | When |
+| --- | --- | --- |
+| `invalid_state` | `ConflictError` | The workspace is in the wrong status, such as `setVolumes` or a resize on a running workspace. |
+| `volume_attached` | `ConflictError` | Deleting a volume that is bound to a workspace. |
+| `resource_in_use` | `ConflictError` | Deleting an egress or resolver that a workspace policy still references. |
+| `file_exists` | `ConflictError` | `makeDir` on an existing path, or `writeFile` with `createOnly` on an existing file. |
+| `desktop_not_enabled` | `ConflictError` | Opening the desktop stream on a workspace without a `desktop.v1` Pack. |
+| `unexpected_status` | `UnexpectedStatusError` | `wait()` observed a status outside the requested targets. |
+| `wait_timeout` | `WaitTimeoutError` | `wait()` ran out of time. |
 
 ### Catching Specific Errors
 
@@ -102,9 +114,15 @@ To disable retries globally:
 const client = new Kibotos({ maxRetries: 0 });
 ```
 
+### Requests That Are Never Retried
+
+`exec`, `execStream`, `writeFile`, `makeDir`, `moveFile`, and `deleteFile` are sent exactly once, regardless of `maxRetries`. They can have side effects or carry a body that cannot be replayed, so decide in your own code whether a failed call is safe to repeat.
+
 ## Idempotency (`Idempotency-Key`)
 
-For every `POST` request (`workspaces.create`, `workspaces.start`, `workspaces.stop`, `workspaces.setTimeout`, `volumes.create`, `volumes.resize`, `exposures.create`), the SDK automatically generates a UUID v4 `Idempotency-Key` header if one is not provided, and **reuses the exact same key across all retry attempts**.
+For every control-plane `POST` request (`workspaces.create`, `workspaces.start`, `workspaces.stop`, `workspaces.setTimeout`, `volumes.create`, `volumes.resize`, `exposures.create`, `egresses.create`, `resolvers.create`), the SDK generates a UUID v4 `Idempotency-Key` header if one is not provided, and **reuses the exact same key across all retry attempts**.
+
+`exec`, `makeDir`, and `moveFile` are not idempotent and never send an `Idempotency-Key`.
 
 To supply your own deterministic key across process restarts or job retries:
 
@@ -136,3 +154,20 @@ const workspace = await client.workspaces.wait(
 ```
 
 Caller-initiated aborts propagate immediately without triggering retries.
+
+### Default Timeouts
+
+| Method | Default client timeout |
+| --- | --- |
+| Most methods | `timeoutMs` from the client options (`30000`). |
+| `wait` | Each long-poll chunk gets at least its window plus 15 seconds. |
+| `exec` | `timeout_seconds` (or `30`) plus 15 seconds. |
+| `execStream`, `readFile`, `writeFile` | No deadline. Pass `timeoutMs` or `signal`. |
+
+A per-request `timeoutMs` overrides the default in every case.
+
+## Streaming and WebSocket Errors
+
+- `execStream` throws a `KibotosAPIError` when the request itself is rejected. A failure after the stream opens is delivered as an `error` event instead.
+- `connectWS`, `connectTunnel`, `connectDesktop`, and `connectProxy` return a `WebSocket` immediately. Handshake and connection failures surface through its `error` and `close` events. Stream-level failures on the multiplexed channel arrive as `error` control frames.
+- `APIConnectionError` is thrown synchronously when no usable `WebSocket` implementation is available. See [WebSocket runtime support](./exec-files-and-tunnels#websocket-runtime-support).

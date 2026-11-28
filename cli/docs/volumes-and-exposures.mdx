@@ -67,11 +67,13 @@ kibo vol wait vol_01j9... --status available,failed --timeout 2m
 kibo vol delete vol_01j9...
 ```
 
+Bind volumes to a workspace with `kibo ws create --volume`, `kibo ws volume attach`, or `kibo ws volumes set`. [Attach and detach persistent volumes](workspaces#attach-and-detach-persistent-volumes)
+
 ## HTTPS Port Exposures (`kibo exposure`)
 
 Aliases: `exp`, `exposures`.
 
-Expose any TCP port (`1`–`65535`) inside an `available` workspace on a temporary public HTTPS URL (`*.kibo.run`).
+Expose any TCP port (`1`–`65535`) inside an `available` workspace on a temporary public HTTPS URL (`*.kibo.run`). For the common case, [`kibo open`](exec-files-and-tunnels#open-a-temporary-https-url) reuses or creates an exposure and opens it in your browser.
 
 ### Create an Exposure
 

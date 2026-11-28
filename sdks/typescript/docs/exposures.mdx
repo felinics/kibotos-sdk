@@ -3,7 +3,7 @@ title: Exposures
 description: Create, list, inspect, and revoke temporary public HTTPS port exposures for Kibotos workspaces with @kibotos/sdk.
 ---
 
-Expose HTTP/HTTPS services running inside a workspace on temporary public HTTPS URLs (`*.kibo.run`) through `client.exposures` (`ExposuresResource`).
+Expose a TCP port of an `'available'` workspace on a temporary public HTTPS URL (`*.kibo.run`) through `client.exposures` (`ExposuresResource`). To reach a workspace service with your API key and no public URL, use the [authenticated proxy](./exec-files-and-tunnels#proxy-to-a-workspace-service) instead.
 
 ## Create an Exposure
 
@@ -88,7 +88,7 @@ console.log(exp.status, exp.expires_at);
 
 `client.exposures.revoke(workspaceId: string, exposureId: string, opts?: RequestOptions): Promise<Exposure>`
 
-Immediately revokes an active exposure (`DELETE /v1/workspaces/{id}/exposures/{exposure_id}`):
+Immediately revokes an exposure (`DELETE /v1/workspaces/{id}/exposures/{exposure_id}`). Revoking an already revoked exposure succeeds:
 
 ```ts
 const revoked = await client.exposures.revoke('wks_01j9...', 'exp_01j9...');

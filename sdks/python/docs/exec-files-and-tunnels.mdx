@@ -1,0 +1,372 @@
+---
+title: Exec, Files & Tunnels
+description: Run commands, stream output, transfer files, read metrics, and build WebSocket session, tunnel, proxy, and desktop connections on Kibotos workspaces in Python.
+---
+
+Data-plane methods live on `client.workspaces` and need an `"available"` workspace. `get_metrics` is the exception and also returns retained metrics for deleted workspaces. Every method exists on both `Kibotos` and `AsyncKibotos` with the same arguments. Differences on the async client are called out in each section.
+
+## Run a Command
+
+`client.workspaces.exec(workspace_id, request, *, timeout=None) -> ExecResponse`
+
+Runs a command once and returns its output (`POST /v1/workspaces/{id}/exec`). `request` is an `ExecRequest` or a mapping. `argv` is passed to the process as-is, without a shell. A non-zero exit code is part of the result and does not raise.
+
+```python
+from kibotos import ExecRequest, Kibotos
+
+with Kibotos() as client:
+    result = client.workspaces.exec(
+        "wks_01j9...",
+        ExecRequest(
+            argv=["/bin/sh", "-c", "python3 main.py | tail -n 20"],
+            working_dir="/app",
+            env={"MODE": "test"},
+            timeout_seconds=60,
+        ),
+    )
+    print(result.exit_code, result.termination_reason, f"{result.duration_ms}ms")
+    print(result.stdout)
+    if result.truncated:
+        print("Output exceeded max_output_bytes")
+```
+
+```python
+# Async
+result = await async_client.workspaces.exec("wks_01j9...", {"argv": ["uname", "-a"]})
+```
+
+### `ExecRequest` Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `argv` | `list[str]` | Command and arguments. Use `["/bin/sh", "-c", "..."]` for shell syntax. |
+| `env` | `dict[str, str] \| None` | Extra environment variables. |
+| `working_dir` | `str \| None` | Working directory. Defaults to the selected user's home. Relative paths resolve against it. |
+| `user` | `str \| None` | Template default user when omitted. Accepts a user declared by the template or `"root"`. |
+| `stdin` | `str \| None` | Written to the process after it starts, then standard input is closed. |
+| `timeout_seconds` | `int \| None` | Defaults to `30`. `exec` accepts at most `600`. Use `exec_stream` or a WebSocket process for longer runs. |
+| `max_output_bytes` | `int \| None` | Cap on combined stdout and stderr for `exec`. Defaults to `1048576`, at most `4194304`. |
+
+### `ExecResponse` Fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `exit_code` | `int \| None` | Process exit code, or `None`. |
+| `signal` | `int \| None` | Number of the signal that ended the process, or `None`. |
+| `termination_reason` | `str` | `"exited"`, `"signaled"`, `"timed_out"`, `"canceled"`, `"failed"`, `"memory_saturated"`, or `"out_of_memory"`. |
+| `stdout`, `stderr` | `str` | Captured output. |
+| `truncated` | `bool` | Output exceeded `max_output_bytes` and the remainder was dropped. |
+| `duration_ms` | `int` | Run time in milliseconds. |
+
+`exec` sets its HTTP timeout to `timeout_seconds` (or `30`) plus 15 seconds unless you pass `timeout`.
+
+## Stream Command Output (SSE)
+
+`client.workspaces.exec_stream(workspace_id, request, *, timeout=None)`
+
+Sends the same request with `Accept: text/event-stream` and yields `ExecEvent` objects as they arrive, with no output limit. It returns a generator on `Kibotos` and an async generator on `AsyncKibotos`.
+
+```python
+import sys
+from contextlib import closing
+
+request = {"argv": ["python3", "-u", "train.py"], "timeout_seconds": 900}
+
+with closing(client.workspaces.exec_stream("wks_01j9...", request)) as events:
+    for event in events:
+        if event.event == "stdout":
+            sys.stdout.write(event.data["data"])
+        elif event.event == "stderr":
+            sys.stderr.write(event.data["data"])
+        elif event.event == "exited":
+            print("exit code:", event.data["exit_code"])
+        elif event.event == "error":
+            print("exec failed:", event.data)
+```
+
+```python
+# Async
+from contextlib import aclosing
+
+async with aclosing(async_client.workspaces.exec_stream("wks_01j9...", request)) as events:
+    async for event in events:
+        print(event.event, event.data)
+```
+
+`ExecEvent.event` is the event name and `ExecEvent.data` is the decoded JSON payload:
+
+| `event` | `data` |
+| --- | --- |
+| `started` | `{"pid": ..., "incarnation": ...}` |
+| `stdout`, `stderr` | `{"data": "..."}` |
+| `heartbeat` | `{}` |
+| `exited` | `{"exit_code": ..., "signal": ..., "termination_reason": ..., "duration_ms": ...}` |
+| `error` | API error body (`code`, `message`, `status`, `request_id`, ...) |
+
+A failure that happens after the stream opens arrives as an `error` event and is not raised. `exec_stream` has no HTTP timeout unless you pass `timeout`. Wrapping the generator in `closing` / `aclosing` releases the connection if you stop iterating early.
+
+## Files
+
+Paths are absolute, or relative to the home directory of the selected user. Every file method accepts `user` to act as another workspace user.
+
+```python
+ws = client.workspaces
+workspace_id = "wks_01j9..."
+
+# Create a directory (raises ConflictError file_exists when the path exists)
+ws.make_dir(workspace_id, "/app/data", mode="0755")
+
+# Write a file from bytes or an iterable of byte chunks
+written = ws.write_file(
+    workspace_id,
+    "/app/data/config.json",
+    b'{"debug": true}',
+    mode="0644",
+    create_only=True,
+)
+print(written.path, written.size_bytes, written.sha256)
+
+# List a directory two levels deep
+listing = ws.list_files(workspace_id, "/app", depth=2)
+for entry in listing.entries:
+    print(entry.type, entry.mode, entry.size_bytes, entry.path)
+
+# Inspect, move, and delete
+stat = ws.stat_file(workspace_id, "/app/data/config.json")
+ws.move_file(workspace_id, "/app/data/config.json", "/app/config.json")
+ws.delete_file(workspace_id, "/app/data")
+```
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `list_files(workspace_id, path, *, depth=None, user=None)` | `FileList` | `depth` sets how many directory levels to include. |
+| `stat_file(workspace_id, path, *, user=None)` | `FileEntry` | `path`, `name`, `type`, `mode`, `modified_at`, `size_bytes`. |
+| `read_file(workspace_id, path, *, user=None, range=None, if_none_match=None, stream=False, timeout=None)` | `bytes`, or a response context manager with `stream=True` | See below. |
+| `write_file(workspace_id, path, content, *, mode=None, create_only=None, user=None, timeout=None)` | `FileWriteResult` | Creates or replaces the file. Body up to 1 GiB. `mode` takes octal bits such as `"0644"`. `create_only=True` fails with `file_exists` instead of replacing. |
+| `make_dir(workspace_id, path, *, mode=None, user=None)` | `FileEntry` | |
+| `move_file(workspace_id, source, destination, *, user=None)` | `FileEntry` | Moves or renames a file or directory. |
+| `delete_file(workspace_id, path, *, user=None)` | `None` | Deletes a file or directory. |
+
+`write_file` takes `bytes` or an `Iterable[bytes]` on `Kibotos`, and `bytes` or an `AsyncIterable[bytes]` on `AsyncKibotos`:
+
+```python
+def chunks(path: str, size: int = 1 << 20):
+    with open(path, "rb") as f:
+        while block := f.read(size):
+            yield block
+
+ws.write_file(workspace_id, "/app/model.bin", chunks("./model.bin"))
+```
+
+### Read a File
+
+`read_file` returns `bytes` by default. Pass `stream=True` to get the `httpx.Response` as a context manager, with access to the status code, headers, and a chunk iterator.
+
+```python
+# Whole file as bytes
+data = ws.read_file(workspace_id, "/app/output.bin")
+
+# Byte range: status 206 with Content-Range
+with ws.read_file(workspace_id, "/app/output.bin", stream=True, range="bytes=0-1048575") as response:
+    print(response.status_code, response.headers.get("Content-Range"))
+    etag = response.headers.get("ETag")
+    with open("output.part", "wb") as f:
+        for chunk in response.iter_bytes():
+            f.write(chunk)
+
+# Revalidate a cached copy: status 304 when the ETag still matches
+with ws.read_file(workspace_id, "/app/output.bin", stream=True, if_none_match=etag) as response:
+    if response.status_code != 304:
+        fresh = response.read()
+```
+
+```python
+# Async
+data = await async_client.workspaces.read_file(workspace_id, "/app/output.bin")
+
+async with await async_client.workspaces.read_file(
+    workspace_id, "/app/output.bin", stream=True,
+) as response:
+    async for chunk in response.aiter_bytes():
+        ...
+```
+
+Use `range` to fetch files larger than 1 GiB in parts.
+
+`read_file` and `write_file` have no HTTP timeout unless you pass `timeout`. `exec`, `exec_stream`, `read_file`, `write_file`, `make_dir`, `move_file`, and `delete_file` are sent once and never retried.
+
+## Metrics
+
+`client.workspaces.get_metrics(workspace_id, *, start=None, end=None) -> WorkspaceMetrics`
+
+Reads host and guest time series, including retained metrics for deleted workspaces. `start` and `end` accept RFC 3339 strings or timezone-aware `datetime` values. A naive `datetime` raises `ValueError`.
+
+```python
+from datetime import datetime, timedelta, timezone
+
+end = datetime.now(timezone.utc)
+metrics = client.workspaces.get_metrics("wks_01j9...", start=end - timedelta(hours=1), end=end)
+
+print("step:", metrics.step_seconds, "earliest:", metrics.earliest_time)
+for point in metrics.guest:
+    print(point.time, point.cpu_used_percent, point.memory_used_bytes, point.disk_used_bytes)
+for point in metrics.host:
+    print(point.time, point.cpu_cores, point.memory_bytes)
+```
+
+Guest points (`WorkspaceGuestMetricsPoint`) always carry `cpu_count`, `cpu_used_percent`, `memory_total_bytes`, `memory_used_bytes`, `memory_cache_bytes`, `disk_total_bytes`, and `disk_used_bytes`. Host fields (`WorkspaceHostMetricsPoint`: CPU cores, memory bytes, CPU / memory / IO pressure ratios, network rates) are `None` when a measurement is unavailable.
+
+## Interactive Sessions over WebSocket
+
+The SDK does not bundle a WebSocket client. It provides the authenticated URL, the handshake headers, and the frame codec, and you connect with the WebSocket library of your choice.
+
+| Helper | Purpose |
+| --- | --- |
+| `client.workspaces.ws_url(workspace_id)` | `wss://` URL of the multiplexed workspace channel (`/v1/workspaces/{id}/ws`). |
+| `client.workspaces.ws_headers()` | `{"Authorization": "Bearer ..."}` for the handshake. |
+| `encode_open_frame(stream_id, kind, params=None)` | JSON text frame that opens a stream. |
+| `encode_binary_frame(stream_id, channel, payload)` | Binary frame: 6-byte header (version `0x01`, big-endian 32-bit stream ID, channel byte) plus payload. |
+| `decode_binary_frame(frame)` | Returns `WorkspaceBinaryFrame(stream_id, channel, payload)`. |
+| `WorkspaceChannel` | `STDIN` (0), `STDOUT` (1), `STDERR` (2), `PTY` (3), `TUNNEL` (4). |
+
+One connection carries any number of streams, each identified by a stream ID from `1` through `0xFFFFFFFF` that you choose:
+
+| Stream kind | Purpose |
+| --- | --- |
+| `process` | PTY terminals and pipe commands, with reattach. |
+| `fs.watch` | Directory change events. |
+| `tunnel` | Byte stream to a port or Unix socket in the workspace. |
+
+Text frames carry JSON control messages (`opened`, `exited`, `fs.event`, `heartbeat`, `closed`, `error`, `pong` from the server; `open`, `resize`, `signal`, `close_stdin`, `close`, `ping` from the client).
+
+### Run a Process
+
+This example uses the third-party [`websockets`](https://websockets.readthedocs.io/) package (version 14 or later):
+
+```python
+import asyncio
+import json
+import sys
+
+from websockets.asyncio.client import connect
+
+from kibotos import (
+    Kibotos,
+    WorkspaceChannel,
+    decode_binary_frame,
+    encode_binary_frame,
+    encode_open_frame,
+)
+
+
+async def main() -> None:
+    client = Kibotos()
+    url = client.workspaces.ws_url("wks_01j9...")
+    headers = client.workspaces.ws_headers()
+
+    async with connect(url, additional_headers=headers) as socket:
+        await socket.send(
+            encode_open_frame(1, "process", {"action": "start", "mode": "pipe", "argv": ["cat"]})
+        )
+        async for message in socket:
+            if isinstance(message, bytes):
+                frame = decode_binary_frame(message)
+                if frame.channel == WorkspaceChannel.STDOUT:
+                    sys.stdout.write(frame.payload.decode())
+                continue
+
+            control = json.loads(message)
+            if control["type"] == "opened":
+                await socket.send(encode_binary_frame(1, WorkspaceChannel.STDIN, b"hello\n"))
+                await socket.send(json.dumps({"type": "close_stdin", "stream_id": 1}))
+            elif control["type"] == "exited":
+                print("exit code:", control.get("exit_code"))
+                break
+            elif control["type"] == "error":
+                print(control.get("code"), control.get("message"))
+
+
+asyncio.run(main())
+```
+
+`process` open parameters:
+
+| Parameter | Description |
+| --- | --- |
+| `action` | `"start"` a new process or `"attach"` to a running one. |
+| `mode` | `"pipe"` (separate stdin / stdout / stderr channels) or `"pty"` (one `PTY` channel). |
+| `argv`, `env`, `working_dir`, `user`, `timeout_seconds` | Same meaning as in `ExecRequest`. |
+| `rows`, `cols` | Initial terminal size for `"pty"`. |
+| `pid`, `incarnation`, `resume_from` | Identify the process for `"attach"`, with optional per-channel resume offsets. |
+
+### Open a Terminal (PTY)
+
+```python
+await socket.send(
+    encode_open_frame(1, "process", {
+        "action": "start",
+        "mode": "pty",
+        "argv": ["/bin/bash", "-l"],
+        "rows": 24,
+        "cols": 80,
+    })
+)
+
+# Keystrokes go in and terminal output comes back on the PTY channel
+await socket.send(encode_binary_frame(1, WorkspaceChannel.PTY, b"ls -la\n"))
+
+# Follow terminal size changes, or interrupt the foreground process
+await socket.send(json.dumps({"type": "resize", "stream_id": 1, "rows": 40, "cols": 120}))
+await socket.send(json.dumps({"type": "signal", "stream_id": 1, "signal": "SIGINT"}))
+```
+
+Watch a directory on the same connection with `encode_open_frame(2, "fs.watch", {"path": "/app"})`. Changes arrive as `fs.event` controls.
+
+## Tunnels, Proxy, and Desktop
+
+These endpoints exchange raw bytes with no multiplexing header. Each helper returns a URL. Send `ws_headers()` with the request.
+
+| Helper | Endpoint |
+| --- | --- |
+| `tunnel_ws_url(workspace_id, *, port=None, family=None, unix_path=None)` | WebSocket carrying the raw bytes of one connection to a TCP port or Unix socket in the workspace. |
+| `proxy_url(workspace_id, port, path="", *, query=None)` | HTTP(S) URL of a service on a loopback port. |
+| `proxy_ws_url(workspace_id, port, path="", *, query=None)` | WebSocket upgrade to the same service. |
+| `desktop_vnc_url(workspace_id)` | WebSocket carrying an RFB (VNC) stream of the workspace desktop, compatible with noVNC. |
+
+### Tunnel to a Port or Unix Socket
+
+Pass either `port` (with optional `family`, `"ipv4"` by default or `"ipv6"`) or `unix_path`. Any other combination raises `ValueError`.
+
+```python
+url = client.workspaces.tunnel_ws_url("wks_01j9...", port=5432)
+docker_url = client.workspaces.tunnel_ws_url("wks_01j9...", unix_path="/var/run/docker.sock")
+
+async with connect(url, additional_headers=client.workspaces.ws_headers()) as tunnel:
+    await tunnel.send(b"\x00")
+    reply = await tunnel.recv()
+```
+
+### Proxy to a Workspace Service
+
+The proxy forwards requests to an HTTP service listening on a loopback port without creating a public [exposure](./exposures). Headers, body, and status code pass through unchanged.
+
+```python
+import httpx
+
+url = client.workspaces.proxy_url("wks_01j9...", 8080, "/api/health", query={"verbose": "1"})
+response = httpx.get(url, headers=client.workspaces.ws_headers())
+print(response.status_code, response.text)
+
+# WebSocket upgrade to the same service
+ws_url = client.workspaces.proxy_ws_url("wks_01j9...", 8080, "/ws")
+```
+
+`proxy_url` raises `ValueError` for a port outside `1`–`65535` or a path containing `.` or `..` segments.
+
+### Remote Desktop
+
+```python
+url = client.workspaces.desktop_vnc_url("wks_01j9...")
+```
+
+The connection fails with `409 desktop_not_enabled` unless the workspace has a Pack that provides `desktop.v1`. See [Packs & Networking](./packs-and-networking#packs).

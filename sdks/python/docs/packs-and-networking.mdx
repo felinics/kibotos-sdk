@@ -1,0 +1,281 @@
+---
+title: Packs & Networking
+description: Browse Kibotos Packs, bind Packs and multiple volumes to workspaces, and configure outbound network policies, SOCKS5 egresses, and DNS resolvers in Python.
+---
+
+Covers the Pack catalog (`client.packs`), workspace Pack and volume bindings, the outbound network policy, and the zoned network resources it references: SOCKS5 egresses (`client.egresses`) and DNS resolvers (`client.resolvers`).
+
+Examples use the synchronous `Kibotos` client. `AsyncKibotos` exposes the same resources (`AsyncPacksResource`, `AsyncEgressesResource`, `AsyncResolversResource`) with identical arguments. Await each call:
+
+```python
+from kibotos import AsyncKibotos
+
+
+async def main() -> None:
+    async with AsyncKibotos() as client:
+        page = await client.packs.list(zone="global-1")
+        egress = await client.egresses.get("egr_01j9...")
+        ws = await client.workspaces.set_packs("wks_01j9...", packs=["node-22"])
+```
+
+## Packs
+
+A Pack adds a capability, such as a language runtime or the remote desktop, to a workspace. `client.packs` reads the platform catalog.
+
+```python
+from kibotos import Kibotos
+
+client = Kibotos()
+
+# List Packs, optionally filtered by zone
+page = client.packs.list(zone="global-1", limit=20)
+for pack in page.data:
+    print(pack.id, pack.version, pack.provided_capabilities, pack.zones)
+
+# Inspect one Pack and an exact revision
+pack = client.packs.get("node-22")
+revision = client.packs.get_revision("node-22", pack.default_revision)
+print(revision.pack_id, revision.id, revision.architecture)
+```
+
+| Method | Returns |
+| --- | --- |
+| `list(*, zone=None, limit=None, page_token=None)` | `PackPage` (`data`, `next_page_token`, `unavailable_zones`) |
+| `get(pack_id)` | `Pack` |
+| `get_revision(pack_id, revision_id)` | `PackRevision` |
+
+`Pack` fields: `id`, `display_name`, `description`, `default_revision`, `version`, `architecture`, `guest_requirements`, `provided_capabilities`, `published_at`, `zones`. `PackRevision` replaces the display fields and `default_revision` with `pack_id`.
+
+There is no `iterate` helper. Pass `page.next_page_token` as `page_token` to fetch the next page.
+
+### Bind Packs to a Workspace
+
+A workspace binds up to four unique Pack IDs. Set them at creation with `packs`, or replace the list later with `set_packs`. A new list takes effect on the next start, and an empty list clears it.
+
+```python
+created = client.workspaces.create(
+    template="debian",
+    packs=["node-22", "kibotos-desktop-env"],
+)
+
+updated = client.workspaces.set_packs(created.id, packs=["node-22"])
+for bound in updated.packs:
+    print(bound.id, bound.revision, bound.provided_capabilities)
+```
+
+A Pack that provides `desktop.v1` enables the [remote desktop stream](./exec-files-and-tunnels#remote-desktop).
+
+## Multiple Volumes
+
+Attach several volumes at creation with `volumes`, or replace the full binding list on a `"stopped"` or `"failed"` workspace with `set_volumes`. Each volume must be in the workspace's zone.
+
+```python
+from kibotos import WorkspaceVolumeInput
+
+ws = client.workspaces.create(
+    template="python-3.12",
+    volumes=[
+        WorkspaceVolumeInput(id="vol_data", mount_path="/data"),
+        WorkspaceVolumeInput(id="vol_cache", mount_path="/cache", delete_with_workspace=True),
+    ],
+)
+
+# Later, with the workspace stopped: keep /data, drop /cache, add /models
+client.workspaces.set_volumes(
+    ws.id,
+    volumes=[
+        {"id": "vol_data", "mount_path": "/data"},
+        {"id": "vol_models", "mount_path": "/models"},
+    ],
+)
+```
+
+`set_volumes` replaces the list, so include every binding you want to keep. An empty list detaches all volumes. See [Volumes](./volumes) for the volume lifecycle.
+
+## Outbound Network Policy
+
+The policy is accepted as `network` on `create` (a `WorkspaceNetworkInput` or mapping) and as keyword arguments to `set_network`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `mode` | `"public_internet"` or `"deny_all"` | Base outbound mode. |
+| `allow` | `list[str]` | IP addresses or CIDRs admitted even when `deny` also covers them. |
+| `deny` | `list[str]` | IP addresses or CIDRs refused for outbound traffic. |
+| `egresses` | `list[NetworkEgressRule]` | At most one rule sending `destinations` through an egress. |
+| `resolvers` | `list[NetworkResolverRule]` | At most one rule replacing the default DNS upstream. |
+| `drain_seconds` | `int` | `set_network` only. Seconds (`0`–`3600`, default `600`) that connections moved by the change keep their old path. |
+
+```python
+ws = client.workspaces.set_network(
+    "wks_01j9...",
+    mode="public_internet",
+    deny=["10.0.0.0/8", "192.168.0.0/16"],
+    allow=["10.1.2.3"],
+    drain_seconds=60,
+)
+print(ws.network.mode, ws.network.deny, ws.network.applied)
+```
+
+`set_network` replaces the whole policy. To change one list, read the current policy and send the merged result:
+
+```python
+current = client.workspaces.get("wks_01j9...")
+net = current.network
+
+client.workspaces.set_network(
+    current.id,
+    mode=net.mode,
+    allow=net.allow,
+    deny=[*(net.deny or []), "198.51.100.0/24"],
+    egresses=net.egresses,
+    resolvers=net.resolvers,
+)
+```
+
+`network.applied` is `None` while the workspace is not running. On a running workspace, poll `get` until it is `True` to confirm the policy is in effect.
+
+## SOCKS5 Egresses
+
+An egress is a SOCKS5 outbound proxy in a zone. Workspaces in the same zone can send selected destinations through it. Manage egresses with `client.egresses`.
+
+```python
+import os
+
+from kibotos import EgressSocks5Input, EgressTLS
+
+# Create
+egress = client.egresses.create(
+    name="corp-proxy",
+    zone="global-1",
+    socks5=EgressSocks5Input(
+        address="proxy.example.com:1080",
+        username="app",
+        password=os.environ["PROXY_PASSWORD"],
+        tls=EgressTLS(server_name="proxy.example.com"),
+    ),
+    udp_enabled=True,
+    labels={"team": "platform"},
+)
+
+# List and get
+page = client.egresses.list(zone="global-1", labels={"team": "platform"})
+fetched = client.egresses.get(egress.id)
+print(fetched.socks5.address, fetched.udp_enabled, fetched.revision)
+
+# Rename or relabel (None deletes a label; name=None clears the name)
+client.egresses.update(egress.id, name="corp-proxy-east", labels={"team": None})
+
+# Replace the endpoint configuration
+client.egresses.replace(
+    egress.id,
+    socks5={
+        "address": "proxy-east.example.com:1080",
+        "username": "app",
+        "password": os.environ["PROXY_PASSWORD"],
+    },
+    udp_enabled=True,
+    drain_seconds=60,
+)
+
+# Delete
+client.egresses.delete(egress.id)
+```
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `create(*, socks5, protocol="socks5", udp_enabled=None, name=None, zone=None, labels=None, idempotency_key=None)` | `Egress` | `socks5` is an `EgressSocks5Input` or mapping. |
+| `list(*, zone=None, labels=None, limit=None, page_token=None)` | `EgressPage` | `data`, `next_page_token`, `unavailable_zones`. |
+| `get(egress_id)` | `Egress` | |
+| `replace(egress_id, *, socks5, protocol="socks5", udp_enabled=None, drain_seconds=None)` | `Egress` | Replaces protocol, endpoint, credentials, and `udp_enabled`. Increments `revision`. |
+| `update(egress_id, *, name=UNSET, labels=None)` | `Egress` | Changes `name` and merge-patches `labels`. Omitting `name` leaves it unchanged. |
+| `delete(egress_id)` | `None` | Raises `ConflictError` (`resource_in_use`) while a workspace policy references it. |
+
+- `socks5.address` is `host:port`.
+- `socks5.password` is write-only. It is never returned, so send it again on every `replace`.
+- Setting `socks5.tls` connects to the endpoint over TLS. `server_name` overrides the SNI and verified name (defaults to the endpoint host), and `ca_cert` supplies PEM trust roots that replace the system roots.
+- `udp_enabled` lets a `udp` resolver send its queries through the egress.
+- `drain_seconds` on `replace` keeps established connections on the previous configuration (default `600`).
+
+## DNS Resolvers
+
+A resolver is a custom DNS upstream in a zone. Manage resolvers with `client.resolvers`. `protocol` selects the upstream type, and exactly the matching argument must be set:
+
+| `protocol` | Argument | Value |
+| --- | --- | --- |
+| `"udp"` | `udp=ResolverAddress(address=...)` | IP or `IP:port` (default port `53`). |
+| `"tcp"` | `tcp=ResolverAddress(address=...)` | IP or `IP:port` (default port `53`). |
+| `"tls"` | `tls=ResolverAddress(address=...)` | DNS over TLS. IP or hostname, with optional port (default `853`). |
+| `"https"` | `https=ResolverHTTPS(url=...)` | DNS over HTTPS endpoint, `https://host[:port]/path`. |
+
+```python
+from kibotos import ResolverAddress, ResolverHTTPS
+
+# Create
+resolver = client.resolvers.create(
+    name="internal-dns",
+    zone="global-1",
+    protocol="udp",
+    udp=ResolverAddress(address="10.0.0.53"),
+)
+
+doh = client.resolvers.create(
+    protocol="https",
+    https=ResolverHTTPS(url="https://dns.example/dns-query"),
+)
+
+# List and get
+page = client.resolvers.list(zone="global-1")
+fetched = client.resolvers.get(resolver.id)
+print(fetched.protocol, fetched.udp.address if fetched.udp else None, fetched.revision)
+
+# Rename or relabel
+client.resolvers.update(resolver.id, name="internal-dns-east")
+
+# Replace the upstream
+client.resolvers.replace(resolver.id, protocol="tls", tls={"address": "dns.example:853"})
+
+# Delete
+client.resolvers.delete(doh.id)
+```
+
+| Method | Returns |
+| --- | --- |
+| `create(*, protocol, udp=None, tcp=None, tls=None, https=None, name=None, zone=None, labels=None, idempotency_key=None)` | `Resolver` |
+| `list(*, zone=None, labels=None, limit=None, page_token=None)` | `ResolverPage` |
+| `get(resolver_id)` | `Resolver` |
+| `replace(resolver_id, *, protocol, udp=None, tcp=None, tls=None, https=None)` | `Resolver` |
+| `update(resolver_id, *, name=UNSET, labels=None)` | `Resolver` |
+| `delete(resolver_id)` | `None` |
+
+`delete` raises `ConflictError` (`resource_in_use`) while a workspace policy references the resolver.
+
+## Attach Egresses and Resolvers to a Workspace
+
+Reference network resources by ID from the workspace policy. Both must be in the same zone and organization as the workspace.
+
+```python
+from kibotos import NetworkEgressRule, NetworkResolverPath, NetworkResolverRule
+
+ws = client.workspaces.set_network(
+    "wks_01j9...",
+    mode="public_internet",
+    # Send these destinations through the egress
+    egresses=[
+        NetworkEgressRule(egress_id=egress.id, destinations=["10.0.0.0/8", "203.0.113.7"]),
+    ],
+    # Replace the default DNS upstream, reaching it through the same egress
+    resolvers=[
+        NetworkResolverRule(
+            resolver_id=resolver.id,
+            path=NetworkResolverPath(type="egress", egress_id=egress.id),
+        ),
+    ],
+)
+print(ws.network.egresses, ws.network.resolvers)
+```
+
+- `destinations` are IP addresses or CIDRs.
+- A resolver `path` is `NetworkResolverPath(type="direct")` or `NetworkResolverPath(type="egress", egress_id=...)`. The egress must be the one listed in the same policy's `egresses`, and a `udp` resolver needs an egress with `udp_enabled`.
+- Rules can also be plain dicts, and the same fields work in `network` on `workspaces.create`.
+
+Remove a reference by sending a policy without it. Egresses and resolvers can be deleted once no workspace policy references them.

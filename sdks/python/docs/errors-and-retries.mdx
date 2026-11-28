@@ -3,7 +3,7 @@ title: Errors & Retries
 description: Handle the KibotosError exception hierarchy, automatic retries with Retry-After backoff, and Idempotency-Key safety in Python.
 ---
 
-The `kibotos` Python SDK maps every API and transport failure onto a structured exception hierarchy, retries transient failures automatically, and attaches safe `Idempotency-Key` headers to `POST` mutations.
+The `kibotos` Python SDK maps API and transport failures onto an exception hierarchy, retries transient failures, and attaches `Idempotency-Key` headers to `POST` mutations.
 
 ## Exception Hierarchy
 
@@ -34,6 +34,18 @@ KibotosError
 | `details` | `dict[str, Any]` | Additional structured metadata from the error envelope (empty dict if omitted). |
 
 `RateLimitError` adds `retry_after: float | None` (delay in seconds parsed from `Retry-After`, supporting both numeric seconds and HTTP-date values). `APIConnectionError` adds `original_error: Exception | None`.
+
+### Common Error Codes
+
+| Code | Exception | When |
+| --- | --- | --- |
+| `invalid_state` | `ConflictError` | The workspace is in the wrong status, such as `set_volumes` or a resize on a running workspace. |
+| `volume_attached` | `ConflictError` | Deleting a volume that is bound to a workspace. |
+| `resource_in_use` | `ConflictError` | Deleting an egress or resolver that a workspace policy still references. |
+| `file_exists` | `ConflictError` | `make_dir` on an existing path, or `write_file` with `create_only=True` on an existing file. |
+| `desktop_not_enabled` | `ConflictError` | Opening the desktop stream on a workspace without a `desktop.v1` Pack. |
+| `unexpected_status` | `UnexpectedStatusError` | `wait()` observed a terminal or unexpected status. |
+| `wait_timeout` | `WaitTimeoutError` | `wait()` ran out of time. |
 
 ### Handling Specific Errors
 
@@ -98,9 +110,15 @@ client = Kibotos(
 no_retry_client = Kibotos(max_retries=0)
 ```
 
+### Requests That Are Never Retried
+
+`exec`, `exec_stream`, `read_file`, `write_file`, `make_dir`, `move_file`, and `delete_file` are sent exactly once, regardless of `max_retries`. They can have side effects or carry a body that cannot be replayed, so decide in your own code whether a failed call is safe to repeat.
+
 ## Idempotency (`Idempotency-Key`)
 
-Every `POST` mutation (`workspaces.create`, `workspaces.start`, `workspaces.stop`, `workspaces.set_timeout`, `volumes.create`, `volumes.resize`, `exposures.create`) automatically sends a generated UUID v4 `Idempotency-Key` header if `idempotency_key` is omitted, and **reuses that exact key across every retry attempt**.
+Every control-plane `POST` mutation (`workspaces.create`, `workspaces.start`, `workspaces.stop`, `workspaces.set_timeout`, `volumes.create`, `volumes.resize`, `exposures.create`, `egresses.create`, `resolvers.create`) sends a generated UUID v4 `Idempotency-Key` header if `idempotency_key` is omitted, and **reuses that exact key across every retry attempt**.
+
+`exec`, `make_dir`, and `move_file` are not idempotent and never send an `Idempotency-Key`.
 
 Pass an explicit `idempotency_key` when retrying work across separate processes or job queues:
 
@@ -111,3 +129,18 @@ ws = client.workspaces.create(
     idempotency_key="job-42-workspace-create-v1",
 )
 ```
+
+## Timeouts
+
+| Method | Default HTTP timeout |
+| --- | --- |
+| Most methods | `timeout` from the client (`30.0` seconds). |
+| `wait` | Each long-poll chunk gets its window plus 10 seconds (at least 15 seconds). |
+| `exec` | `timeout_seconds` (or `30`) plus 15 seconds. |
+| `exec_stream`, `read_file`, `write_file` | None. Pass `timeout` to set one. |
+
+`exec`, `exec_stream`, `read_file`, and `write_file` accept a per-call `timeout` (`float` seconds or `httpx.Timeout`).
+
+## Streaming Errors
+
+`exec_stream` raises an `APIError` subclass when the request itself is rejected. A failure after the stream opens is delivered as an `error` event instead. `read_file(..., stream=True)` raises when the context manager is entered.

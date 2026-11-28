@@ -1,22 +1,22 @@
 ---
 title: Workspaces
-description: Create, list, update with UNSET/None PATCH semantics, start, stop, configure timeouts and networking, attach volumes, and wait for Kibotos workspaces in Python.
+description: Create, list, update with UNSET/None PATCH semantics, resize, start, stop, configure timeouts, networking, volumes, and Packs, and wait for Kibotos workspaces in Python.
 ---
 
-Manage microVM workspaces via `client.workspaces` (`WorkspacesResource` on `Kibotos`, `AsyncWorkspacesResource` on `AsyncKibotos`).
+Manage microVM workspaces via `client.workspaces` (`WorkspacesResource` on `Kibotos`, `AsyncWorkspacesResource` on `AsyncKibotos`). Every method below exists on both clients with the same arguments. Await the call on `AsyncKibotos`. Running commands, transferring files, and opening tunnels are covered in [Exec, Files & Tunnels](./exec-files-and-tunnels).
 
 ## Create a Workspace
 
-`create()` sends `POST /v1/workspaces` (HTTP `202 Accepted`) and returns a `Workspace` model. Only `template` is required, and it accepts either a template ID string, a `WorkspaceTemplateRef`, or a mapping.
+`create()` sends `POST /v1/workspaces` (HTTP `202 Accepted`) and returns a `Workspace` model. Only `template` is required. It accepts a template ID string, a `WorkspaceTemplateRef`, or a mapping.
 
 ```python
 from kibotos import (
     Kibotos,
-    WorkspaceNetwork,
+    WorkspaceNetworkInput,
     WorkspaceResources,
     WorkspaceTemplateRef,
     WorkspaceTimeoutSpec,
-    WorkspaceVolume,
+    WorkspaceVolumeInput,
 )
 
 with Kibotos() as client:
@@ -25,25 +25,39 @@ with Kibotos() as client:
         name="ml-sandbox",
         zone="global-1",
         resources=WorkspaceResources(vcpus=4, memory_mib=8192, disk_mib=20480),
-        network=WorkspaceNetwork(mode="public_internet"),
-        volume=WorkspaceVolume(
-            id="vol_01j9...",
-            mount_path="/data",
-            delete_with_workspace=False,
-        ),
+        network=WorkspaceNetworkInput(mode="public_internet", deny=["10.0.0.0/8"]),
+        volumes=[
+            WorkspaceVolumeInput(id="vol_data", mount_path="/data"),
+            WorkspaceVolumeInput(id="vol_cache", mount_path="/cache", delete_with_workspace=True),
+        ],
+        packs=["node-22"],
         timeout=WorkspaceTimeoutSpec(seconds=3600, action="stop"),
         labels={"team": "ml", "env": "staging"},
         idempotency_key="ml-sandbox-create-1",
     )
 ```
 
-Plain dicts are also accepted for `template`, `resources`, `network`, `volume`, and `timeout`, and `template="python-3.12"` is shorthand for `{"id": "python-3.12"}`.
+| Argument | Type | Description |
+| --- | --- | --- |
+| `template` | `str \| WorkspaceTemplateRef \| Mapping` | Required. `template="python-3.12"` is shorthand for `{"id": "python-3.12"}`. |
+| `name` | `str \| None` | Human-readable workspace name. |
+| `zone` | `str \| None` | Target zone ID (defaults to the organization's default zone). |
+| `resources` | `WorkspaceResources \| Mapping \| None` | `vcpus`, `memory_mib`, `disk_mib` overrides. |
+| `network` | `WorkspaceNetworkInput \| Mapping \| None` | Outbound policy: `mode` plus optional `allow`, `deny`, `egresses`, `resolvers`. See [Packs & Networking](./packs-and-networking#outbound-network-policy). |
+| `volumes` | `Sequence[WorkspaceVolumeInput \| Mapping] \| None` | Volumes to attach at creation. Each must be in the workspace's zone. |
+| `volume` | `WorkspaceVolumeInput \| Mapping \| None` | Legacy single-volume form of `volumes`. |
+| `packs` | `Sequence[str] \| None` | Up to four unique Pack IDs. |
+| `timeout` | `WorkspaceTimeoutSpec \| Mapping \| None` | Auto-timeout: `seconds` and optional `action` (`"stop"` or `"delete"`). |
+| `labels` | `Mapping[str, str] \| None` | Key-value metadata labels. |
+| `idempotency_key` | `str \| None` | Explicit `Idempotency-Key`. Generated when omitted. |
+
+The returned `Workspace` reports attachments in `volumes` (and the legacy `volume` field), bound Packs in `packs` (`WorkspacePack` with `id`, `revision`, `provided_capabilities`), and the active policy in `network`.
 
 ## Wait for a Target Status
 
 `client.workspaces.wait(workspace_id, *, status, timeout=30.0) -> Workspace`
 
-Long-polls `GET /v1/workspaces/{id}/wait` until the workspace reaches one of the target statuses. Timeouts longer than `60` seconds automatically loop across `<= 60s` server wait windows.
+Long-polls `GET /v1/workspaces/{id}/wait` until the workspace reaches one of the target statuses. Timeouts longer than `60` seconds loop across `<= 60s` server wait windows.
 
 ```python
 # Synchronous
@@ -55,7 +69,7 @@ ws = await async_client.workspaces.wait(created.id, status="available", timeout=
 
 - `status`: A single status string or a sequence of strings (`"creating"`, `"available"`, `"stopping"`, `"stopped"`, `"starting"`, `"deleting"`, `"failed"`, `"unknown"`).
 - `timeout`: Total wait budget in seconds (`float`, default `30.0`). Raises `ValueError` if non-positive.
-- Raises `WaitTimeoutError` (`408`) if the budget expires, or `UnexpectedStatusError` (`409`) if the workspace enters an unexpected terminal state.
+- Raises `WaitTimeoutError` (`408`) if the budget expires, or `UnexpectedStatusError` (`409`) if the workspace reaches a terminal or unexpected status.
 
 ## List and Iterate Workspaces
 
@@ -90,30 +104,47 @@ async for ws in async_client.workspaces.iterate(status="available"):
 
 ## Get, Update (`UNSET` PATCH Semantics), and Delete
 
-`update()` uses an internal `UNSET` sentinel default for `name` so the SDK can distinguish between **omitting** `name` (leave unchanged) and passing **`name=None`** (explicitly clear the name to JSON `null`):
+`update()` defaults `name` to an internal `UNSET` sentinel, so the SDK can tell **omitting** `name` (leave unchanged) from passing **`name=None`** (clear the name with JSON `null`):
 
 ```python
 # Fetch by ID
 ws = client.workspaces.get("wks_01j9...")
 
-# Update labels ONLY (name is omitted / UNSET, so it is NOT sent in the PATCH body)
+# Update labels only (name is omitted, so it is not sent in the PATCH body)
 ws = client.workspaces.update(
     ws.id,
     labels={
         "owner": "platform",
-        "old_tag": None,  # Passing None removes that label key
+        "old_tag": None,  # None removes that label key
     },
 )
 
 # Rename the workspace
 ws = client.workspaces.update(ws.id, name="renamed-sandbox")
 
-# Explicitly clear the workspace name (sends {"name": null})
+# Clear the workspace name (sends {"name": null})
 ws = client.workspaces.update(ws.id, name=None)
 
 # Delete asynchronously (HTTP 202)
 deleting = client.workspaces.delete(ws.id)
 print(deleting.status)  # "deleting"
+```
+
+## Resize a Workspace
+
+`update()` also accepts `resources`. A workspace must be `"stopped"` or `"failed"` to change vCPUs or memory or to grow the root disk. The root disk cannot shrink.
+
+```python
+client.workspaces.stop(ws.id)
+client.workspaces.wait(ws.id, status="stopped", timeout=120)
+
+ws = client.workspaces.update(
+    ws.id,
+    resources={"vcpus": 4, "memory_mib": 8192, "disk_mib": 40960},
+)
+print(ws.resources)
+
+client.workspaces.start(ws.id)
 ```
 
 ## Start and Stop
@@ -126,7 +157,7 @@ client.workspaces.wait(ws.id, status="stopped", timeout=60)
 # Force immediate power-off
 client.workspaces.stop(ws.id, force=True, idempotency_key="force-stop-1")
 
-# Start a stopped workspace with an optional timeout policy
+# Start a stopped or failed workspace with an optional timeout policy
 client.workspaces.start(
     ws.id,
     timeout=WorkspaceTimeoutSpec(seconds=7200, action="stop"),
@@ -135,6 +166,8 @@ client.workspaces.wait(ws.id, status="available", timeout=120)
 ```
 
 ## Update Timeout Policy
+
+Resets the expiration policy on an available workspace:
 
 ```python
 ws = client.workspaces.set_timeout(
@@ -147,26 +180,58 @@ print(ws.timeout.expires_at if ws.timeout else None)
 
 ## Configure Outbound Network
 
-Switch outbound network mode between `"public_internet"` and `"deny_all"`:
+`client.workspaces.set_network(workspace_id, *, mode, allow=None, deny=None, egresses=None, resolvers=None, drain_seconds=None) -> Workspace`
+
+Replaces the whole outbound policy (`PUT /v1/workspaces/{id}/network`). `network.applied` is `None` while the workspace is not running and becomes `True` once a running workspace has confirmed the policy.
 
 ```python
 ws = client.workspaces.set_network(ws.id, mode="deny_all")
 print(ws.network.mode, ws.network.applied)
 ```
 
+Allow and deny lists, egresses, resolvers, and `drain_seconds` are covered in [Packs & Networking](./packs-and-networking#outbound-network-policy).
+
 ## Attach and Detach Volumes
 
-Volumes must belong to the same zone as the workspace and are attached/detached while the workspace is `"stopped"`:
+`client.workspaces.set_volumes(workspace_id, *, volumes) -> Workspace`
+
+Replaces all volume bindings on a `"stopped"` or `"failed"` workspace (`PUT /v1/workspaces/{id}/volumes`). Send every binding you want to keep. An empty list detaches all volumes.
 
 ```python
-# Attach a persistent volume
+ws = client.workspaces.set_volumes(
+    ws.id,
+    volumes=[
+        {"id": "vol_data", "mount_path": "/data"},
+        {"id": "vol_cache", "mount_path": "/cache", "delete_with_workspace": True},
+    ],
+)
+print([(v.id, v.mount_path) for v in ws.volumes])
+
+# Detach everything
+client.workspaces.set_volumes(ws.id, volumes=[])
+```
+
+The single-volume methods remain available. `attach_volume` leaves the workspace with only the given volume and `detach_volume` removes every attachment, so use `set_volumes` when a workspace has more than one volume.
+
+```python
 ws = client.workspaces.attach_volume(
     ws.id,
     volume_id="vol_01j9...",
     mount_path="/data",
     delete_with_workspace=False,
 )
-
-# Detach the attached volume
 ws = client.workspaces.detach_volume(ws.id)
 ```
+
+## Set Packs
+
+`client.workspaces.set_packs(workspace_id, *, packs) -> Workspace`
+
+Replaces the Pack list with up to four unique Pack IDs (`PUT /v1/workspaces/{id}/packs`). The change takes effect on the next start. An empty list clears it.
+
+```python
+ws = client.workspaces.set_packs(ws.id, packs=["node-22"])
+print([(p.id, p.revision) for p in ws.packs])
+```
+
+Browse available Packs with `client.packs`. See [Packs & Networking](./packs-and-networking#packs).

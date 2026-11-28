@@ -102,8 +102,8 @@ for ws, err := range client.Workspaces.Iter(ctx, &kibotos.WorkspaceListParams{
 
 - Control-plane `POST` mutations and egress and resolver replacements attach a UUID v4 `Idempotency-Key` and reuse it across retry attempts. Override the key with `kibotos.WithIdempotencyKey("...")`.
 - On retry-enabled requests, retryable API errors (`retryable: true`), HTTP `429` (honoring `Retry-After`), `500`/`502`/`503`/`504`, and transient network errors are retried with exponential backoff and jitter.
-- Process execution and file mutations send one request. File content transfers and SSE use the caller’s context and any timeout configured on a custom HTTP client. Set a deadline on the caller’s context to bound the entire operation.
-- Inspect errors with `errors.As(err, &apiErr)` or helpers `kibotos.IsNotFound(err)`, `kibotos.IsRetryable(err)`, `kibotos.IsRateLimited(err)`, `kibotos.IsWaitTimeout(err)`, and `kibotos.IsUnauthenticated(err)`.
+- Process execution, file transfers, file mutations, and `Proxy` send one request and never carry an `Idempotency-Key`. File content transfers and SSE use the caller’s context and any timeout configured on a custom HTTP client. Set a deadline on the caller’s context to bound the entire operation.
+- Inspect errors with `errors.As(err, &apiErr)` or helpers `kibotos.IsNotFound(err)`, `kibotos.IsRetryable(err)`, `kibotos.IsRateLimited(err)`, `kibotos.IsWaitTimeout(err)`, `kibotos.IsUnexpectedStatus(err)`, and `kibotos.IsUnauthenticated(err)`.
 
 ## Services Covered
 
@@ -117,7 +117,7 @@ for ws, err := range client.Workspaces.Iter(ctx, &kibotos.WorkspaceListParams{
 
 ## Workspace configuration
 
-Create workspaces with `CreateWorkspaceRequest.Volumes` and `Packs`. The legacy `Volume` field remains available for single-volume callers. Resize stopped or failed workspaces with `UpdateWorkspaceRequest.Resources`. `SetVolumes` and `SetPacks` accept empty slices to clear the corresponding bindings. Pack changes apply on the next start. `SetNetwork` takes the complete `WorkspaceNetworkInput`. `DrainSeconds: kibotos.Ptr(0)` requests zero drain time. The response field `Network.Applied` is a `*bool` and is nil while the workspace is stopped.
+Create workspaces with `CreateWorkspaceRequest.Volumes` and `Packs`. The legacy `Volume` field remains available for single-volume callers. `AttachVolume` leaves only the given volume attached and `DetachVolume` removes every attachment, so use `SetVolumes` on multi-volume workspaces. Resize stopped or failed workspaces with `UpdateWorkspaceRequest.Resources`. `SetVolumes` and `SetPacks` accept empty slices to clear the corresponding bindings. A workspace binds up to four Packs, and Pack changes apply on the next start. `SetNetwork` takes the complete `WorkspaceNetworkInput`, including `Allow`, `Deny`, `Egresses`, and `Resolvers`. `DrainSeconds: kibotos.Ptr(0)` requests zero drain time. The response field `Network.Applied` is a `*bool` and is nil while the workspace is not running.
 
 ## Workspace data plane
 
@@ -142,3 +142,9 @@ _, err = io.Copy(dst, file)
 `ExecStream` calls a handler for each SSE event, including `started`, output, heartbeats and the terminal `exited` or `error` event. The handler can return an error to stop processing. `ReadFile` exposes the HTTP status and response headers alongside the stream. `WriteFile` takes an `io.Reader` and supports mode, user and create-only options.
 
 `DialWS` opens the multiplexed channel. Use `OpenProcess` with `start` or `attach`, `OpenFSWatch`, and `OpenTunnel` with distinct positive stream IDs. `Read` yields either JSON control events or binary frames. `WriteControl` sends controls such as PTY resize. `WriteBinary` encodes the version byte, four-byte big-endian stream ID, and one-byte channel before the payload. Keep a reader running to process WebSocket pings. `DialTunnel` takes a guest TCP port or Unix path. It and `DialDesktopVNC` exchange raw binary messages with no multiplexing header.
+
+`Proxy` forwards an authenticated HTTP request to a loopback port inside the workspace and returns the raw `*http.Response` for every status.
+
+## Documentation
+
+Reference guides live in [`docs/`](./docs) and are published at [docs.kibo.to](https://docs.kibo.to): workspaces, volumes, exposures, exec / files / tunnels, Packs and networking, templates and zones, and errors and retries.
