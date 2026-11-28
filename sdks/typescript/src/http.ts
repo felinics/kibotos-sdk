@@ -23,6 +23,12 @@ export interface InternalRequestConfig {
   path: string;
   query?: URLSearchParams;
   body?: unknown;
+  rawBody?: BodyInit;
+  duplex?: 'half';
+  accept?: string;
+  successStatuses?: readonly number[];
+  nonReplayable?: boolean;
+  disableIdempotency?: boolean;
   opts?: RequestOptions;
   /**
    * When true, HTTP 408 `wait_timeout` responses are NOT retried by the low-level transport
@@ -154,6 +160,29 @@ function combineSignals(
   };
 }
 
+function combineResponseSignals(
+  userSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): ReturnType<typeof combineSignals> {
+  const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
+  if (userSignal && hasTimeout && typeof AbortSignal.any !== 'function') {
+    // Older Node 20 releases have AbortSignal.timeout but lack AbortSignal.any.
+    const combined = combineSignals(userSignal, timeoutMs);
+    combined.signal?.addEventListener('abort', combined.cleanup, { once: true });
+    return combined;
+  }
+
+  // Native signals keep cancellation active while the caller consumes the response.
+  const timeoutSignal = hasTimeout ? AbortSignal.timeout(timeoutMs) : undefined;
+  return {
+    signal: userSignal && timeoutSignal
+      ? AbortSignal.any([userSignal, timeoutSignal])
+      : userSignal ?? timeoutSignal,
+    isTimeout: () => timeoutSignal?.aborted === true,
+    cleanup: () => {},
+  };
+}
+
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {
     return Promise.reject(createAbortError(signal));
@@ -221,35 +250,50 @@ export class HttpClient {
     return url.toString();
   }
 
-  async request<T>(config: InternalRequestConfig): Promise<T> {
-    const { method, path, query, body, opts, disableWaitTimeoutRetry } = config;
-    const url = this.buildUrl(path, query);
-    const effectiveTimeoutMs = opts?.timeoutMs ?? this.timeoutMs;
-    const userSignal = opts?.signal;
-
-    // Build headers once so the exact same Idempotency-Key is reused on every retry.
+  buildHeaders(overrides?: Record<string, string>): Headers {
     const headers = new Headers();
-    headers.set('Accept', 'application/json');
-    headers.set('User-Agent', `@kibotos/sdk/${SDK_VERSION}`);
     if (this.apiKey) {
       headers.set('Authorization', `Bearer ${this.apiKey}`);
     }
     for (const [k, v] of Object.entries(this.defaultHeaders)) {
       headers.set(k, v);
     }
-    if (opts?.headers) {
-      for (const [k, v] of Object.entries(opts.headers)) {
-        headers.set(k, v);
-      }
+    for (const [k, v] of Object.entries(overrides ?? {})) {
+      headers.set(k, v);
+    }
+    return headers;
+  }
+
+  async request<T>(config: InternalRequestConfig): Promise<T> {
+    return (await this.perform(config, false)) as T;
+  }
+
+  requestResponse(config: InternalRequestConfig): Promise<Response> {
+    return this.perform(config, true) as Promise<Response>;
+  }
+
+  private async perform(config: InternalRequestConfig, rawResponse: boolean): Promise<unknown> {
+    const { method, path, query, body, rawBody, opts, disableWaitTimeoutRetry } = config;
+    const url = this.buildUrl(path, query);
+    const effectiveTimeoutMs = opts?.timeoutMs ?? this.timeoutMs;
+    const userSignal = opts?.signal;
+    const maxRetries = config.nonReplayable ? 0 : this.maxRetries;
+
+    // Build headers once so the exact same Idempotency-Key is reused on every retry.
+    const headers = this.buildHeaders(opts?.headers);
+    headers.set('Accept', config.accept ?? headers.get('Accept') ?? 'application/json');
+    if (!headers.has('User-Agent')) {
+      headers.set('User-Agent', `@kibotos/sdk/${SDK_VERSION}`);
     }
 
-    const hasBody = body !== undefined;
-    const serializedBody = hasBody ? JSON.stringify(body) : undefined;
-    if (hasBody && !headers.has('Content-Type')) {
-      headers.set('Content-Type', 'application/json');
+    const requestBody = rawBody ?? (body === undefined ? undefined : JSON.stringify(body));
+    if (requestBody !== undefined && !headers.has('Content-Type')) {
+      headers.set('Content-Type', rawBody === undefined ? 'application/json' : 'application/octet-stream');
     }
 
-    if (opts?.idempotencyKey) {
+    if (config.disableIdempotency) {
+      headers.delete('Idempotency-Key');
+    } else if (opts?.idempotencyKey) {
       headers.set('Idempotency-Key', opts.idempotencyKey);
     } else if (method === 'POST' && !headers.has('Idempotency-Key')) {
       headers.set('Idempotency-Key', generateUuid());
@@ -262,16 +306,20 @@ export class HttpClient {
         throw createAbortError(userSignal);
       }
 
-      const { signal, isTimeout, cleanup } = combineSignals(userSignal, effectiveTimeoutMs);
+      const { signal, isTimeout, cleanup } = rawResponse
+        ? combineResponseSignals(userSignal, effectiveTimeoutMs)
+        : combineSignals(userSignal, effectiveTimeoutMs);
 
       let response: Response;
       try {
-        response = await this.fetchImpl(url, {
+        const init: RequestInit & { duplex?: 'half' } = {
           method,
           headers,
-          body: serializedBody,
+          body: requestBody,
           signal,
-        });
+        };
+        if (config.duplex) init.duplex = config.duplex;
+        response = await this.fetchImpl(url, init);
       } catch (err) {
         cleanup();
 
@@ -289,13 +337,17 @@ export class HttpClient {
               { cause: err },
             );
 
-        if (attempt < this.maxRetries) {
+        if (attempt < maxRetries) {
           const delayMs = calculateBackoffMs(attempt);
           attempt += 1;
           await sleep(delayMs, userSignal);
           continue;
         }
         throw connectionError;
+      }
+
+      if (rawResponse && (response.ok || config.successStatuses?.includes(response.status))) {
+        return response;
       }
 
       let parsedBody: unknown;
@@ -316,7 +368,7 @@ export class HttpClient {
         const readError = isTimeout()
           ? new APIConnectionError(`Request timed out after ${effectiveTimeoutMs}ms`, { cause: err })
           : new APIConnectionError('Failed to read response body from the Kibotos API', { cause: err });
-        if (attempt < this.maxRetries) {
+        if (attempt < maxRetries) {
           const delayMs = calculateBackoffMs(attempt);
           attempt += 1;
           await sleep(delayMs, userSignal);
@@ -328,7 +380,7 @@ export class HttpClient {
       }
 
       if (response.ok) {
-        return parsedBody as T;
+        return parsedBody;
       }
 
       const apiError = createAPIError(
@@ -338,7 +390,7 @@ export class HttpClient {
         response.statusText || undefined,
       );
 
-      if (this.shouldRetryAPIError(apiError, disableWaitTimeoutRetry) && attempt < this.maxRetries) {
+      if (this.shouldRetryAPIError(apiError, disableWaitTimeoutRetry) && attempt < maxRetries) {
         const retryAfterMs =
           apiError instanceof RateLimitError
             ? apiError.retryAfterMs

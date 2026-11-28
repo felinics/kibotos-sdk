@@ -1,5 +1,8 @@
 import { HttpClient } from './http';
 import {
+  EgressesResource,
+  PacksResource,
+  ResolversResource,
   ExposuresResource,
   TemplatesResource,
   VolumesResource,
@@ -27,6 +30,12 @@ export class Kibotos {
   readonly volumes: VolumesResource;
   readonly exposures: ExposuresResource;
 
+  readonly egresses: EgressesResource;
+
+  readonly packs: PacksResource;
+
+  readonly resolvers: ResolversResource;
+
   private readonly http: HttpClient;
 
   constructor(options: KibotosClientOptions = {}) {
@@ -35,6 +44,9 @@ export class Kibotos {
     this.templates = new TemplatesResource(this.http);
     this.workspaces = new WorkspacesResource(this.http);
     this.volumes = new VolumesResource(this.http);
+    this.egresses = new EgressesResource(this.http);
+    this.packs = new PacksResource(this.http);
+    this.resolvers = new ResolversResource(this.http);
     this.exposures = new ExposuresResource(this.http);
   }
 

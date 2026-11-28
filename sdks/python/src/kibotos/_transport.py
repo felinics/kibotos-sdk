@@ -7,7 +7,8 @@ import random
 import time
 import urllib.parse
 import uuid
-from collections.abc import Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Final
 
 import httpx
@@ -62,6 +63,14 @@ def serialize_labels(labels: Mapping[str, str] | None) -> list[tuple[str, str]]:
     return [(f"label.{k}", v) for k, v in labels.items()]
 
 
+def query_params(**values: str | int | bool | None) -> list[tuple[str, str]]:
+    return [
+        (key, str(value).lower() if isinstance(value, bool) else str(value))
+        for key, value in values.items()
+        if value is not None
+    ]
+
+
 def to_payload(value: BaseModel | Mapping[str, Any]) -> dict[str, Any]:
     """Convert a Pydantic model or mapping to a JSON-serializable dict, dropping None fields."""
     if isinstance(value, BaseModel):
@@ -94,6 +103,7 @@ def _build_headers(
     method: str,
     has_body: bool,
     idempotency_key: str | None = None,
+    use_idempotency: bool = True,
 ) -> dict[str, str]:
     headers: dict[str, str] = {
         "Authorization": f"Bearer {api_key}",
@@ -102,9 +112,9 @@ def _build_headers(
     }
     if has_body:
         headers["Content-Type"] = "application/json"
-    if method.upper() == "POST":
+    if use_idempotency and method.upper() == "POST":
         headers["Idempotency-Key"] = idempotency_key or str(uuid.uuid4())
-    elif idempotency_key:
+    elif use_idempotency and idempotency_key:
         headers["Idempotency-Key"] = idempotency_key
     return headers
 
@@ -161,8 +171,11 @@ class SyncTransport:
         *,
         params: list[tuple[str, str]] | None = None,
         json_body: dict[str, Any] | None = None,
+        content: bytes | Iterable[bytes] | None = None,
         idempotency_key: str | None = None,
         timeout: float | httpx.Timeout | None = None,
+        replayable: bool = True,
+        use_idempotency: bool = True,
     ) -> Any:
         url = f"{self.base_url}{path}"
         headers = _build_headers(
@@ -170,9 +183,13 @@ class SyncTransport:
             method=method,
             has_body=json_body is not None,
             idempotency_key=idempotency_key,
+            use_idempotency=use_idempotency,
         )
+        if content is not None:
+            headers["Content-Type"] = "application/octet-stream"
+        max_retries = self.max_retries if replayable else 0
 
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(max_retries + 1):
             try:
                 kwargs: dict[str, Any] = {
                     "headers": headers,
@@ -181,9 +198,11 @@ class SyncTransport:
                 }
                 if timeout is not None:
                     kwargs["timeout"] = timeout
+                if content is not None:
+                    kwargs["content"] = content
                 response = self._client.request(method, url, **kwargs)
             except httpx.TransportError as exc:
-                if attempt >= self.max_retries:
+                if attempt >= max_retries:
                     raise APIConnectionError(
                         f"Request to {method} {url} failed: {exc}",
                         original_error=exc,
@@ -200,7 +219,7 @@ class SyncTransport:
                 return _parse_json_response(response)
 
             error = error_from_response(response)
-            if attempt < self.max_retries and _should_retry_error(error):
+            if attempt < max_retries and _should_retry_error(error):
                 retry_after = (
                     error.retry_after
                     if isinstance(error, RateLimitError)
@@ -217,6 +236,38 @@ class SyncTransport:
             raise error
 
         raise AssertionError("unreachable")
+
+    @contextmanager
+    def stream(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: list[tuple[str, str]] | None = None,
+        json_body: dict[str, Any] | None = None,
+        headers: Mapping[str, str],
+        timeout: float | httpx.Timeout | None = None,
+        success_statuses: tuple[int, ...] = (),
+    ) -> Iterator[httpx.Response]:
+        """Open a single streaming request and close it on context exit."""
+        url = f"{self.base_url}{path}"
+        request_headers = _build_headers(
+            self.api_key, method=method, has_body=json_body is not None, use_idempotency=False,
+        )
+        request_headers.update(headers)
+        try:
+            with self._client.stream(
+                method, url, params=params, json=json_body, headers=request_headers,
+                timeout=httpx.USE_CLIENT_DEFAULT if timeout is None else timeout,
+            ) as response:
+                if not response.is_success and response.status_code not in success_statuses:
+                    response.read()
+                    raise error_from_response(response)
+                yield response
+        except httpx.TransportError as exc:
+            raise APIConnectionError(
+                f"Request to {method} {url} failed: {exc}", original_error=exc,
+            ) from exc
 
 
 class AsyncTransport:
@@ -256,8 +307,11 @@ class AsyncTransport:
         *,
         params: list[tuple[str, str]] | None = None,
         json_body: dict[str, Any] | None = None,
+        content: bytes | AsyncIterable[bytes] | None = None,
         idempotency_key: str | None = None,
         timeout: float | httpx.Timeout | None = None,
+        replayable: bool = True,
+        use_idempotency: bool = True,
     ) -> Any:
         url = f"{self.base_url}{path}"
         headers = _build_headers(
@@ -265,9 +319,13 @@ class AsyncTransport:
             method=method,
             has_body=json_body is not None,
             idempotency_key=idempotency_key,
+            use_idempotency=use_idempotency,
         )
+        if content is not None:
+            headers["Content-Type"] = "application/octet-stream"
+        max_retries = self.max_retries if replayable else 0
 
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(max_retries + 1):
             try:
                 kwargs: dict[str, Any] = {
                     "headers": headers,
@@ -276,9 +334,11 @@ class AsyncTransport:
                 }
                 if timeout is not None:
                     kwargs["timeout"] = timeout
+                if content is not None:
+                    kwargs["content"] = content
                 response = await self._client.request(method, url, **kwargs)
             except httpx.TransportError as exc:
-                if attempt >= self.max_retries:
+                if attempt >= max_retries:
                     raise APIConnectionError(
                         f"Request to {method} {url} failed: {exc}",
                         original_error=exc,
@@ -295,7 +355,7 @@ class AsyncTransport:
                 return _parse_json_response(response)
 
             error = error_from_response(response)
-            if attempt < self.max_retries and _should_retry_error(error):
+            if attempt < max_retries and _should_retry_error(error):
                 retry_after = (
                     error.retry_after
                     if isinstance(error, RateLimitError)
@@ -312,3 +372,35 @@ class AsyncTransport:
             raise error
 
         raise AssertionError("unreachable")
+
+    @asynccontextmanager
+    async def stream(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: list[tuple[str, str]] | None = None,
+        json_body: dict[str, Any] | None = None,
+        headers: Mapping[str, str],
+        timeout: float | httpx.Timeout | None = None,
+        success_statuses: tuple[int, ...] = (),
+    ) -> AsyncIterator[httpx.Response]:
+        """Open a single streaming request and close it on context exit."""
+        url = f"{self.base_url}{path}"
+        request_headers = _build_headers(
+            self.api_key, method=method, has_body=json_body is not None, use_idempotency=False,
+        )
+        request_headers.update(headers)
+        try:
+            async with self._client.stream(
+                method, url, params=params, json=json_body, headers=request_headers,
+                timeout=httpx.USE_CLIENT_DEFAULT if timeout is None else timeout,
+            ) as response:
+                if not response.is_success and response.status_code not in success_statuses:
+                    await response.aread()
+                    raise error_from_response(response)
+                yield response
+        except httpx.TransportError as exc:
+            raise APIConnectionError(
+                f"Request to {method} {url} failed: {exc}", original_error=exc,
+            ) from exc

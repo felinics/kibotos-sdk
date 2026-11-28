@@ -223,13 +223,31 @@ export interface WorkspaceResourcesInput {
   disk_mib?: number;
 }
 
-export interface WorkspaceNetwork {
-  mode: NetworkMode;
-  applied: boolean;
+export interface NetworkEgressRule {
+  egress_id: string;
+  destinations: string[];
+}
+
+export type NetworkResolverPath =
+  | { type: 'direct' }
+  | { type: 'egress'; egress_id: string };
+
+export interface NetworkResolverRule {
+  resolver_id: string;
+  path: NetworkResolverPath;
 }
 
 export interface WorkspaceNetworkInput {
   mode: NetworkMode;
+  allow?: string[];
+  deny?: string[];
+  egresses?: NetworkEgressRule[];
+  resolvers?: NetworkResolverRule[];
+}
+
+export interface WorkspaceNetwork extends WorkspaceNetworkInput {
+  /** Null while the workspace is stopped. */
+  applied: boolean | null;
 }
 
 export interface WorkspaceVolumeAttachment {
@@ -254,6 +272,12 @@ export interface WorkspaceTimeoutInput {
   action?: TimeoutAction;
 }
 
+export interface WorkspacePack {
+  id: string;
+  revision: string;
+  provided_capabilities: string[];
+}
+
 export interface Workspace {
   id: string;
   name: string | null;
@@ -264,6 +288,8 @@ export interface Workspace {
   resources: WorkspaceResources;
   network: WorkspaceNetwork;
   volume: WorkspaceVolumeAttachment | null;
+  volumes?: WorkspaceVolumeAttachment[];
+  packs?: WorkspacePack[];
   timeout: WorkspaceTimeout | null;
   labels: Record<string, string>;
   created_at: string;
@@ -277,6 +303,8 @@ export interface CreateWorkspaceRequest {
   resources?: WorkspaceResourcesInput;
   network?: WorkspaceNetworkInput;
   volume?: WorkspaceVolumeAttachmentInput;
+  volumes?: WorkspaceVolumeAttachmentInput[];
+  packs?: string[];
   timeout?: WorkspaceTimeoutInput;
   labels?: Record<string, string>;
 }
@@ -292,6 +320,7 @@ export interface UpdateWorkspaceRequest {
   name?: string | null;
   /** Set a key to `null` to delete that label. */
   labels?: Record<string, string | null>;
+  resources?: WorkspaceResourcesInput;
 }
 
 export interface StartWorkspaceRequest {
@@ -307,8 +336,56 @@ export interface SetWorkspaceTimeoutRequest {
   action?: TimeoutAction;
 }
 
-export interface SetWorkspaceNetworkRequest {
-  mode: NetworkMode;
+export interface SetWorkspaceNetworkRequest extends WorkspaceNetworkInput {
+  drain_seconds?: number;
+}
+
+export interface SetWorkspaceVolumesRequest {
+  volumes: WorkspaceVolumeAttachmentInput[];
+}
+
+export interface SetWorkspacePacksRequest {
+  packs: string[];
+}
+
+export interface WorkspaceMetricsParams {
+  start?: string | Date;
+  end?: string | Date;
+}
+
+export interface WorkspaceGuestMetricsPoint {
+  time: string;
+  cpu_count: number;
+  cpu_used_percent: number;
+  disk_total_bytes: number;
+  disk_used_bytes: number;
+  memory_cache_bytes: number;
+  memory_total_bytes: number;
+  memory_used_bytes: number;
+}
+
+export interface WorkspaceHostMetricsPoint {
+  time: string;
+  cpu_cores?: number;
+  cpu_pressure_some_ratio?: number;
+  io_pressure_full_ratio?: number;
+  io_pressure_some_ratio?: number;
+  memory_bytes?: number;
+  memory_pressure_full_ratio?: number;
+  memory_pressure_some_ratio?: number;
+  network_receive_bytes_per_second?: number;
+  network_receive_dropped_per_second?: number;
+  network_receive_packets_per_second?: number;
+  network_transmit_bytes_per_second?: number;
+  network_transmit_dropped_per_second?: number;
+  network_transmit_packets_per_second?: number;
+}
+
+export interface WorkspaceMetrics {
+  earliest_time: string | null;
+  guest: WorkspaceGuestMetricsPoint[];
+  host: WorkspaceHostMetricsPoint[];
+  step_seconds: number;
 }
 
 export interface AttachVolumeRequest {
@@ -418,4 +495,203 @@ export interface WaitVolumeParams {
    * Values greater than `60` automatically loop across `<= 60s` server wait calls.
    */
   timeoutSeconds?: number;
+}
+
+// Packs and network resources
+
+interface PackRelease {
+  id: string;
+  architecture: string;
+  guest_requirements: string[];
+  provided_capabilities: string[];
+  published_at: string;
+  version: string;
+  zones: string[];
+}
+
+export interface Pack extends PackRelease {
+  default_revision: string;
+  description: string;
+  display_name: string;
+}
+
+export interface PackRevision extends PackRelease {
+  pack_id: string;
+}
+
+export interface ListPacksParams extends PaginationParams {
+  zone?: string;
+}
+
+export interface ListEgressesParams extends ListPacksParams {
+  labels?: Record<string, string>;
+}
+
+export type ListResolversParams = ListEgressesParams;
+
+export interface EgressTLS {
+  ca_cert?: string | null;
+  server_name?: string | null;
+}
+
+export interface EgressSocks5 {
+  address: string;
+  tls?: EgressTLS | null;
+  username?: string | null;
+}
+
+export interface EgressSocks5Input extends EgressSocks5 {
+  /** Write-only. Supply again when replacing the configuration. */
+  password?: string | null;
+}
+
+interface ZonedNetworkResource {
+  id: string;
+  name: string | null;
+  zone: string;
+  labels: Record<string, string>;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CreateNetworkResourceRequest {
+  name?: string;
+  zone?: string;
+  labels?: Record<string, string>;
+}
+
+export interface Egress extends ZonedNetworkResource {
+  protocol: 'socks5';
+  socks5: EgressSocks5;
+  udp_enabled: boolean;
+}
+
+export interface CreateEgressRequest extends CreateNetworkResourceRequest {
+  protocol: 'socks5';
+  socks5: EgressSocks5Input;
+  udp_enabled?: boolean;
+}
+
+export interface ReplaceEgressRequest {
+  protocol: 'socks5';
+  socks5: EgressSocks5Input;
+  udp_enabled?: boolean;
+  drain_seconds?: number;
+}
+
+export interface UpdateEgressRequest {
+  name?: string | null;
+  labels?: Record<string, string | null>;
+}
+
+export interface ResolverAddress {
+  address: string;
+}
+
+export interface ResolverHTTPS {
+  url: string;
+}
+
+interface ResolverConfig {
+  protocol: 'udp' | 'tcp' | 'tls' | 'https';
+  udp?: ResolverAddress;
+  tcp?: ResolverAddress;
+  tls?: ResolverAddress;
+  https?: ResolverHTTPS;
+}
+
+export interface Resolver extends ZonedNetworkResource, ResolverConfig {}
+
+export interface CreateResolverRequest extends CreateNetworkResourceRequest, ResolverConfig {}
+
+export type ReplaceResolverRequest = ResolverConfig;
+export type UpdateResolverRequest = UpdateEgressRequest;
+
+// Workspace data plane
+
+export interface ExecRequest {
+  argv: string[];
+  env?: Record<string, string>;
+  max_output_bytes?: number;
+  stdin?: string | null;
+  timeout_seconds?: number;
+  user?: string | null;
+  working_dir?: string | null;
+}
+
+export interface ExecResponse {
+  duration_ms: number;
+  exit_code: number | null;
+  signal: number | null;
+  stdout: string;
+  stderr: string;
+  termination_reason:
+    | 'exited'
+    | 'signaled'
+    | 'timed_out'
+    | 'canceled'
+    | 'failed'
+    | 'memory_saturated'
+    | 'out_of_memory';
+  truncated: boolean;
+}
+
+export interface ExecEvent {
+  event: 'started' | 'stdout' | 'stderr' | 'heartbeat' | 'exited' | 'error';
+  /** The decoded JSON payload, or the original text when the payload is not JSON. */
+  data: unknown;
+}
+
+export interface FileEntry {
+  path: string;
+  name: string;
+  type: string;
+  mode: string;
+  modified_at: string | null;
+  size_bytes: number;
+}
+
+export interface FileList {
+  path: string;
+  entries: FileEntry[];
+}
+
+export interface FileWriteResult {
+  path: string;
+  size_bytes: number;
+  sha256: string;
+}
+
+export interface FileOptions extends RequestOptions {
+  user?: string;
+}
+
+export interface ListFilesOptions extends FileOptions {
+  depth?: number;
+}
+
+export interface ReadFileOptions extends FileOptions {
+  range?: string;
+  ifNoneMatch?: string;
+  as?: 'response' | 'bytes' | 'stream';
+}
+
+export interface WriteFileOptions extends FileOptions {
+  mode?: string;
+  createOnly?: boolean;
+}
+
+export type FileContent = Uint8Array | ReadableStream<Uint8Array> | string | Blob;
+
+export interface MakeDirectoryRequest {
+  path: string;
+  mode?: string;
+  user?: string | null;
+}
+
+export interface MoveFileRequest {
+  source: string;
+  destination: string;
+  user?: string | null;
 }

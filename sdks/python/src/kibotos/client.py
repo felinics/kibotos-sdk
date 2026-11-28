@@ -17,11 +17,17 @@ from ._transport import (
     SyncTransport,
 )
 from .resources import (
+    AsyncEgressesResource,
+    AsyncPacksResource,
+    AsyncResolversResource,
     AsyncExposuresResource,
     AsyncTemplatesResource,
     AsyncVolumesResource,
     AsyncWorkspacesResource,
     AsyncZonesResource,
+    EgressesResource,
+    PacksResource,
+    ResolversResource,
     ExposuresResource,
     TemplatesResource,
     VolumesResource,
@@ -84,6 +90,9 @@ class Kibotos:
         self.templates = TemplatesResource(self._transport)
         self.workspaces = WorkspacesResource(self._transport)
         self.volumes = VolumesResource(self._transport)
+        self.egresses = EgressesResource(self._transport)
+        self.packs = PacksResource(self._transport)
+        self.resolvers = ResolversResource(self._transport)
         self.exposures = ExposuresResource(self._transport)
 
     @property
@@ -142,6 +151,9 @@ class AsyncKibotos:
         self.templates = AsyncTemplatesResource(self._transport)
         self.workspaces = AsyncWorkspacesResource(self._transport)
         self.volumes = AsyncVolumesResource(self._transport)
+        self.egresses = AsyncEgressesResource(self._transport)
+        self.packs = AsyncPacksResource(self._transport)
+        self.resolvers = AsyncResolversResource(self._transport)
         self.exposures = AsyncExposuresResource(self._transport)
 
     @property

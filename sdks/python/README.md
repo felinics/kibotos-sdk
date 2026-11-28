@@ -56,6 +56,66 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Workspace Configuration and Catalogs
+
+Workspace creation accepts `volumes`, Pack IDs in `packs`, and a `network` policy with `allow`, `deny`, `egresses`, and `resolvers`. Use `workspaces.update(workspace_id, resources={...})` to change CPU, memory, or grow the root disk of a stopped or failed workspace. Use `set_volumes` and `set_packs` to replace the complete lists. An empty list clears the corresponding bindings. Pack changes take effect on the next start. The legacy `volume` field and single-volume methods remain available.
+
+`set_network` also accepts `drain_seconds`. The response's `network.applied` is `None` while the workspace is inactive. `get_metrics(workspace_id, start=..., end=...)` accepts RFC 3339 strings or timezone-aware datetimes and returns host and guest time series.
+
+| Namespace | Methods |
+| --- | --- |
+| `client.packs` | `list`, `get`, `get_revision` |
+| `client.egresses`, `client.resolvers` | `create`, `list`, `get`, `replace` (configuration), `update` (name and labels), `delete` |
+
+For these catalogs, pass the response's `next_page_token` as `page_token` to fetch another page.
+
+## Commands and Files
+
+```python
+from contextlib import closing
+
+from kibotos import ExecRequest
+
+ws = client.workspaces
+result = ws.exec(workspace_id, ExecRequest(argv=["python3", "--version"]))
+print(result.exit_code, result.stdout)
+
+with closing(ws.exec_stream(workspace_id, {"argv": ["ls", "-l"]})) as events:
+    for event in events:
+        print(event.event, event.data)
+
+ws.make_dir(workspace_id, "/tmp/example", mode="0750")
+ws.write_file(workspace_id, "/tmp/example/hello.txt", b"hello", mode="0640", create_only=True)
+with ws.read_file(workspace_id, "/tmp/example/hello.txt", stream=True, range="bytes=0-2") as response:
+    print(response.status_code, response.headers.get("Content-Range"))
+    for chunk in response.iter_bytes():
+        print(chunk)
+```
+
+`exec_stream` yields `started`, `stdout`, `stderr`, `heartbeat`, `exited`, and `error` events and decodes JSON event data when present. Use `async for` with `AsyncKibotos`, and use `contextlib.aclosing` when you may exit an async iterator early. `exec` defaults to an HTTP timeout of the command's `timeout_seconds` (30 seconds if omitted) plus 15 seconds. `exec_stream`, `read_file`, and `write_file` use an HTTP timeout only when you pass `timeout` on the request.
+
+`read_file` returns bytes by default. Use `stream=True` to access the response status, ETag, and byte iterator. Pass `if_none_match` to revalidate an ETag and check for `304` on the response. With `AsyncKibotos`, use `async with await ws.read_file(..., stream=True)` and `response.aiter_bytes()`. `write_file` accepts either bytes or an iterable of byte chunks, using an async iterable with `AsyncKibotos`. The other filesystem methods are `list_files`, `stat_file`, `make_dir`, `move_file`, and `delete_file`. All seven methods accept a workspace `user`.
+
+## WebSocket URLs and Framing
+
+Use `ws_url` for multiplexed workspace streams, `tunnel_ws_url` for a raw TCP or Unix socket tunnel, `desktop_vnc_url` for the VNC stream, and `proxy_ws_url` for a WebSocket upgrade to a workspace service. `proxy_url` returns the HTTP(S) service URL. Pass the headers from `ws_headers()` to your WebSocket implementation for the authenticated handshake.
+
+```python
+from kibotos import WorkspaceChannel, decode_binary_frame, encode_binary_frame, encode_open_frame
+
+url = client.workspaces.ws_url(workspace_id)
+headers = client.workspaces.ws_headers()
+control = encode_open_frame(1, "process", {
+    "action": "start", "mode": "pipe", "argv": ["cat"],
+})
+frame = encode_binary_frame(1, WorkspaceChannel.STDIN, b"hello\n")
+stream_id, channel, payload = decode_binary_frame(frame)
+```
+
+Send `control` as a WebSocket text message to open the stream. The JSON envelope is `{"type":"open","stream_id":1,"kind":"process","params":{"action":"start","mode":"pipe","argv":["cat"]}}`. Use a stream ID from 1 through `0xFFFFFFFF` for stream opens and binary frames.
+
+Binary frames have a six-byte header with version `0x01`, a big-endian 32-bit stream ID, and a channel byte. The channel values are `0` stdin, `1` stdout, `2` stderr, `3` PTY, and `4` tunnel.
+
 ## Configuration
 
 | Option | Env Fallback | Default | Description |
@@ -69,8 +129,9 @@ asyncio.run(main())
 
 ### Reliability Features
 
-- **Idempotency**: All `POST` mutations automatically include a UUID v4 `Idempotency-Key` header (unless you pass `idempotency_key=...`) and reuse the exact same key across retries.
+- **Idempotency**: Control-plane `POST` mutations automatically include a UUID v4 `Idempotency-Key` header (unless you pass `idempotency_key=...`) and reuse the same key across retries.
 - **Retries & `Retry-After`**: Exponential backoff with jitter automatically honors server `Retry-After` headers on `429 RateLimitError`.
+- **One-shot data-plane requests**: `exec`, `exec_stream`, `read_file`, `write_file`, `make_dir`, `move_file`, and `delete_file` make a single attempt.
 - **Long Waits (`>60s`)**: `workspaces.wait()` and `volumes.wait()` automatically chunk timeouts longer than the server's 60-second long-poll maximum.
 - **Forward Compatibility**: All Pydantic models use `extra="ignore"` so additive v1 API fields never break deserialization.
 

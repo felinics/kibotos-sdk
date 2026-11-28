@@ -2,7 +2,7 @@
 
 Official zero-dependency TypeScript and JavaScript SDK for the **Kibotos** v1 API.
 
-Built exclusively on standard Web APIs (`fetch`, `URL`, `URLSearchParams`, `AbortController`, `AbortSignal.timeout`, `crypto.randomUUID`), `@kibotos/sdk` runs seamlessly in **Node 20+**, **Bun**, **Deno**, and **Cloudflare Workers**.
+The HTTP client uses built-in Web APIs including `fetch`, `ReadableStream`, and `AbortController` on **Node 20+**, **Bun**, **Deno**, and **Cloudflare Workers**.
 
 ## Installation
 
@@ -73,13 +73,67 @@ In edge runtimes without `process.env` (such as Cloudflare Workers), pass `apiKe
 | --- | --- |
 | `client.zones` | `list`, `iterate` |
 | `client.templates` | `list`, `iterate`, `get`, `listRevisions`, `getRevision` |
-| `client.workspaces` | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `setTimeout`, `setNetwork`, `attachVolume`, `detachVolume`, `wait` |
+| `client.workspaces` | `create`, `list`, `iterate`, `get`, `update`, `delete`, `start`, `stop`, `setTimeout`, `setNetwork`, `setVolumes`, `setPacks`, `getMetrics`, `attachVolume`, `detachVolume`, `wait` |
 | `client.volumes` | `create`, `list`, `iterate`, `get`, `update`, `resize`, `delete`, `wait` |
 | `client.exposures` | `create`, `list`, `iterate`, `get`, `revoke` |
+| `client.packs` | `list`, `get`, `getRevision` |
+| `client.egresses`, `client.resolvers` | `create`, `list`, `get`, `replace` (configuration), `update` (name and labels), `delete` |
+
+Workspace creation accepts `volumes`, Pack IDs in `packs`, and a `network` policy with `allow`, `deny`, `egresses`, and `resolvers`. Use `update(id, { resources: { vcpus, memory_mib, disk_mib } })` to resize a stopped or failed workspace. The root disk can only grow. `setVolumes` and `setPacks` take the complete list, and an empty list clears it. Pack changes take effect on the next start. The legacy `volume` field and single-volume methods remain available.
+
+`setNetwork` also accepts `drain_seconds`. The response's `network.applied` is `null` while the workspace is inactive. `getMetrics(id, { start, end })` accepts RFC 3339 strings or `Date` values and returns host and guest time series.
+
+## Commands and Files
+
+```ts
+const ws = client.workspaces;
+const result = await ws.exec(workspaceId, { argv: ['python3', '--version'] });
+console.log(result.exit_code, result.stdout);
+
+for await (const { event, data } of ws.execStream(workspaceId, { argv: ['ls', '-l'] })) {
+  console.log(event, data);
+}
+
+await ws.makeDir(workspaceId, { path: '/tmp/example', mode: '0750' });
+await ws.writeFile(workspaceId, '/tmp/example/hello.txt', 'hello', {
+  mode: '0640', createOnly: true,
+});
+const response = await ws.readFile(workspaceId, '/tmp/example/hello.txt', {
+  range: 'bytes=0-2',
+});
+console.log(response.status, response.headers.get('Content-Range'), await response.text());
+```
+
+`execStream` yields `started`, `stdout`, `stderr`, `heartbeat`, `exited`, and `error` events. It decodes JSON event data when present. `exec` defaults to the command's `timeout_seconds` (30 seconds if omitted) plus 15 seconds. `execStream`, `readFile`, and `writeFile` have no default client deadline. Pass `timeoutMs` to set a per-request deadline or `signal` to cancel a request.
+
+`readFile` returns a `Response` by default. Pass `as: 'bytes'` for a `Uint8Array` or `as: 'stream'` for its readable body. Use the response form to check `206` and `Content-Range`, or `304` when using `ifNoneMatch`. `writeFile` also accepts a `Uint8Array`, `Blob`, or `ReadableStream<Uint8Array>`. The directory and metadata methods are `listFiles`, `statFile`, `makeDir`, `moveFile`, and `deleteFile`. All seven file methods accept a workspace user override.
+
+## WebSocket Connections
+
+```ts
+import { WorkspaceChannel } from '@kibotos/sdk';
+
+const connection = client.workspaces.connectWS(workspaceId);
+connection.onFrame((message) => {
+  if (message.type === 'binary' && message.frame.channel === WorkspaceChannel.stdout) {
+    console.log(message.frame.stream_id, message.frame.payload);
+  }
+  if (message.type === 'control') console.log(message.frame);
+});
+connection.socket.addEventListener('open', () => {
+  connection.open(1, 'process', { action: 'start', mode: 'pipe', argv: ['printf', 'hello'] });
+});
+```
+
+`WorkspaceSocket` supports `process`, `fs.watch`, and `tunnel` streams on one connection. Use `sendControl` for JSON controls and `sendBinary` for stream payloads. The exported `encodeBinaryFrame` and `decodeBinaryFrame` use a version byte (`0x01`), a big-endian 32-bit stream ID, and a channel byte (`0` stdin, `1` stdout, `2` stderr, `3` PTY, `4` tunnel).
+
+`connectTunnel`, `connectDesktop`, and `connectProxy` return raw WebSockets. Use `tunnelWSUrl`, `desktopVNCUrl`, `proxyWSUrl`, `wsUrl`, and `wsHeaders` to build an upgrade for your own transport. `proxyUrl` builds the HTTP(S) URL.
+
+Authenticated native upgrades use Node's global `WebSocket` with handshake headers. Node 20 exposes the global from 20.10 with `--experimental-websocket`. For a runtime whose global lacks handshake header support, pass a `factory` that accepts the URL, headers, and requested subprotocols.
 
 ## Auto-Pagination & Label Filtering
 
-Every listable resource exposes an `iterate(...)` method returning an `AsyncIterable<T>`:
+Resources with an `iterate(...)` method return an `AsyncIterable<T>`. For Packs, egresses, and resolvers, pass `next_page_token` from the previous list response as `page_token`.
 
 ```ts
 for await (const ws of client.workspaces.iterate({
@@ -93,9 +147,10 @@ for await (const ws of client.workspaces.iterate({
 
 ## Retries, Idempotency & Cancellation
 
-- **Automatic idempotency**: `POST` mutations automatically generate a UUID v4 `Idempotency-Key` header if omitted and reuse the exact same key across retries. You may also pass `idempotencyKey` in `RequestOptions`.
+- **Automatic idempotency**: Control-plane `POST` mutations automatically generate a UUID v4 `Idempotency-Key` header if omitted and reuse the same key across retries. You may also pass `idempotencyKey` in `RequestOptions`.
 - **Retries**: Exponential backoff with jitter for `retryable: true` API errors, HTTP `429` (honoring `Retry-After` seconds or HTTP-date), `500`/`502`/`503`/`504`, and transient network failures.
-- **Cancellation**: Pass an `AbortSignal` via `{ signal }` on any method to cancel in-flight requests, retry delays, and `wait()` loops.
+- **One-shot data-plane requests**: `exec`, `execStream`, `writeFile`, `makeDir`, `moveFile`, and `deleteFile` make a single attempt.
+- **Cancellation**: Pass an `AbortSignal` via `{ signal }` to HTTP methods to cancel in-flight requests, retry delays, and `wait()` loops.
 
 ## Error Handling
 
