@@ -42,7 +42,7 @@ Credential & URL precedence (highest to lowest):
 | `2` | Usage or validation error | Fix flags/arguments before re-running |
 | `3` | Unauthenticated / HTTP `401` | Guide user to run `kibo login` or configure `KIBOTOS_API_KEY` |
 
-In `--json` mode, errors are emitted to `stderr` as:
+`exec` also returns the remote exit code, 124 on timeout, or 128 plus the signal number. With `--json`, CLI and API errors use the structured envelope on stderr.
 
 ```json
 {
@@ -139,7 +139,8 @@ All workspace commands accepting `[id-or-name]` accept either a `wks_...` ID or 
   - `--memory <size>`: Memory allocation (`4Gi`, `4096`; bare integer is MiB)
   - `--disk <size>`: Root disk size (`20Gi`, `20480`; bare integer is MiB)
   - `--network <mode>`: `public_internet` or `deny_all`
-  - `--volume <vol>`: Existing volume ID or name to attach at creation
+  - `--volume <vol_id:/path>` binds an existing volume at creation. Repeat it for each mount or pass one legacy volume ID or name with `--mount-path`.
+  - `--pack <pack_id>` binds a Pack at creation. Pass up to four unique IDs.
   - `--mount-path <path>`: Mount path for `--volume` (e.g. `/data`)
   - `--delete-volume`: Delete the attached volume when the workspace is deleted (requires `--volume`)
   - `--timeout <dur>`: Auto-timeout duration (`1h`, `30m`, `3600`; bare integer is seconds)
@@ -155,11 +156,35 @@ All workspace commands accepting `[id-or-name]` accept either a `wks_...` ID or 
 - `kibo workspace stop [id-or-name] [--force] [--no-wait] [--wait-timeout <dur>] [-y]`
 - `kibo workspace timeout [id-or-name] --seconds <dur> [--action <stop|delete>]`
 - `kibo workspace network [id-or-name] --mode <public_internet|deny_all> [--no-wait] [--wait-timeout <dur>]`
-  - Waits by default until `network.applied` is `true`.
-- `kibo workspace volume attach [workspace] --volume <vol> [--mount-path </data>] [--delete-with-workspace]`
-- `kibo workspace volume detach [workspace]`
+  - Add repeatable `--allow <IP_OR_CIDR>` and `--deny <IP_OR_CIDR>`, up to one `--egress <egress_id=IP_OR_CIDR[,IP_OR_CIDR...]>`, and up to one `--resolver <resolver_id[=egress_id]>`. The resolver uses a direct path when the egress ID is omitted. Use `--drain-seconds <0..3600>` to control egress connection draining.
+  - Updates replace the complete policy. Running workspaces wait by default until `network.applied` is true. Stopped workspaces apply the policy on the next start.
+- `kibo workspace volume attach <workspace> <vol_id> --mount /data [--delete-with-workspace]` adds one binding.
+- `kibo workspace volume detach <workspace> <vol_id>` removes one binding.
+- `kibo workspace volumes set <workspace> [vol_id:/path...]` replaces the complete list. Omit bindings to detach every volume. Volume changes require a stopped or failed workspace.
+- `kibo workspace resize <workspace> [--vcpus <n>] [--memory-mib <n>] [--disk-mib <n>]` changes at least one resource. The workspace must be stopped or failed, and the root disk can only grow.
+- `kibo workspace packs set <workspace> [pack_id...]` replaces the ordered list that takes effect on the next start. Omit IDs to clear the list.
+- `kibo workspace metrics <workspace> [--start <RFC3339>] [--end <RFC3339>]` reads host and guest time series.
 - `kibo workspace wait [id-or-name] -s|--status <s1,s2> [--timeout <dur>]`
   - `--status` accepts comma-separated values or repeated flags (default `--timeout`: `30s`).
+
+## Execution, file transfers, and tunnels
+
+- `kibo exec <workspace> [--workdir <path>] [--env KEY=VALUE] [--timeout <seconds>] [--user <user>] [--stdin <text|->] [--stream] -- <command> [args...]` runs argv directly. Repeat `--env` to pass multiple variables. The default timeout is 30 seconds. Use `--stream --timeout <seconds>` for long-running commands, for example `kibo exec wks_... --stream --timeout 900 --json -- python3 -u main.py`. Synchronous execution accepts up to 600 seconds. Combining `--stream` with `--json` emits one event per line.
+- `kibo exec <workspace> -it -- <command> [args...]` runs an interactive PTY with window-size forwarding on Unix. Use a local terminal with human-readable output.
+- `kibo files ls <workspace> [path] [--depth <n>]` lists entries under the path, defaulting to the selected user's home directory.
+- `kibo files stat <workspace> <path>` shows file attributes.
+- `kibo files get <workspace> <path> [local-file|-] [--range bytes=0-1023]` streams bytes to stdout or a local file. With `--json`, supply a local file to receive metadata.
+- `kibo files put <workspace> <local-file|-> <path> [--mode 0644] [--create-only]` uploads from a local file or stdin.
+- `kibo files mkdir <workspace> <path> [--mode 0755]`, `files mv <workspace> <source> <destination>`, and `files rm <workspace> <path>` manage workspace files. All file commands accept `--user <user>`.
+- `kibo tunnel <workspace> --remote <port> [--family ipv4|ipv6] [--listen 127.0.0.1:18080]` forwards local TCP connections to the guest's loopback port. Use `--unix-path <absolute-path>` in place of `--remote` to connect to a guest Unix socket.
+
+## Packs, Egresses, and Resolvers
+
+- `kibo pack list [--zone <id>] [--limit <n>] [--page-token <token>]` and `kibo pack get <pack_id> [--revision <id>]` query the Pack catalog.
+- `kibo egress list` and `kibo resolver list` accept `--zone`, repeatable `--label KEY=VALUE`, `--limit`, and `--page-token`. Each also supports `get <id>` and `delete <id>`. Deletion fails while the resource is referenced by a workspace policy.
+- `kibo egress create --address <host:port>` creates a SOCKS5 proxy configuration. Options include `--name`, `--zone`, `--label`, `--username`, `--password-env <variable>`, `--tls`, `--server-name`, `--ca-cert <PEM-file>`, and `--udp-enabled`.
+- `kibo resolver create --protocol <udp|tcp|tls> --address <upstream>` configures an address-based DNS upstream. For DNS over HTTPS, use `--protocol https --url <endpoint>`. Creation accepts `--name`, `--zone`, and `--label`.
+- `kibo egress update <id>` and `kibo resolver update <id>` accept metadata flags `--name`, `--clear-name`, `--label`, and `--unset-label`. Run a separate update with the full endpoint configuration to replace it. An egress replacement accepts `--drain-seconds` and must resupply the credentials for an authenticated proxy.
 
 ## Volume Commands
 

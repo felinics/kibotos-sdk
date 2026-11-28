@@ -3,7 +3,7 @@ title: Errors & Retries
 description: Inspect *kibotos.APIError responses, use error helper predicates, configure automatic retries with Retry-After, and pass WithIdempotencyKey in Go.
 ---
 
-The Go SDK returns structured `*kibotos.APIError` values for non-2xx responses, automatically retries transient failures with jittered exponential backoff, and protects every `POST` mutation with an `Idempotency-Key`.
+The Go SDK returns structured `*kibotos.APIError` values for API failures and uses jittered exponential backoff on retry-enabled requests. Process execution, file content transfers, and file mutations send one request.
 
 ## `*kibotos.APIError`
 
@@ -88,7 +88,7 @@ noRetryClient, err := kibotos.NewClient(apiKey, kibotos.WithMaxRetries(0))
 
 ## Idempotency (`WithIdempotencyKey`)
 
-Every `POST` mutation (`Workspaces.Create`, `Workspaces.Start`, `Workspaces.Stop`, `Workspaces.SetTimeout`, `Volumes.Create`, `Volumes.Resize`, `Exposures.Create`) automatically generates a UUID v4 `Idempotency-Key` header when omitted and reuses that exact key across retries.
+Control-plane `POST` mutations and egress and resolver replacements generate a UUID v4 `Idempotency-Key` header when omitted and reuse it across retries.
 
 Supply your own deterministic key across restarts with `kibotos.WithIdempotencyKey`:
 

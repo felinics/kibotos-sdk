@@ -31,6 +31,10 @@ func (a *App) newWorkspaceCmd() *cobra.Command {
 		a.newWorkspaceTimeoutCmd(),
 		a.newWorkspaceNetworkCmd(),
 		a.newWorkspaceVolumeCmd(),
+		a.newWorkspaceVolumesCmd(),
+		a.newWorkspacePacksCmd(),
+		a.newWorkspaceResizeCmd(),
+		a.newWorkspaceMetricsCmd(),
 		a.newWorkspaceWaitCmd(),
 	)
 	return cmd
@@ -113,8 +117,12 @@ func (a *App) newWorkspaceListCmd() *cobra.Command {
 			rows := make([][]string, 0, len(page.Data))
 			for _, ws := range page.Data {
 				volStr := "-"
-				if ws.Volume != nil {
-					volStr = ws.Volume.ID
+				if volumes := workspaceVolumes(&ws); len(volumes) > 0 {
+					ids := make([]string, 0, len(volumes))
+					for _, vol := range volumes {
+						ids = append(ids, vol.ID)
+					}
+					volStr = strings.Join(ids, ", ")
 				}
 				timeoutStr := "-"
 				if ws.Timeout != nil {
@@ -185,7 +193,8 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 		memoryRaw     string
 		diskRaw       string
 		networkMode   string
-		volumeRef     string
+		volumeRefs    []string
+		packIDs       []string
 		mountPath     string
 		deleteVolume  bool
 		timeoutRaw    string
@@ -255,11 +264,15 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := validateNonEmptyFlag(cmd, "volume", volumeRef); err != nil {
+			volumeInputs, legacyVolume, err := parseCreateVolumes(volumeRefs)
+			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(volumeRef) == "" && (cmd.Flags().Changed("mount-path") || cmd.Flags().Changed("delete-volume")) {
-				return usageError("--mount-path and --delete-volume require --volume")
+			if err := validatePacks(packIDs); err != nil {
+				return err
+			}
+			if legacyVolume == "" && (cmd.Flags().Changed("mount-path") || cmd.Flags().Changed("delete-volume")) {
+				return usageError("--mount-path and --delete-volume require a single --volume without an embedded mount path")
 			}
 			if cmd.Flags().Changed("mount-path") {
 				mountPath, err = validateMountPath(mountPath)
@@ -316,8 +329,10 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 			}
 
 			params := kibotos.CreateWorkspaceParams{
-				Name: strings.TrimSpace(name),
-				Zone: strings.TrimSpace(zone),
+				Volumes: volumeInputs,
+				Packs:   packIDs,
+				Name:    strings.TrimSpace(name),
+				Zone:    strings.TrimSpace(zone),
 				Template: kibotos.WorkspaceTemplateSpec{
 					ID:       tplID,
 					Revision: tplRev,
@@ -340,8 +355,8 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 				params.Network = &kibotos.WorkspaceNetworkSpec{Mode: mode}
 			}
 
-			if strings.TrimSpace(volumeRef) != "" {
-				volID, _, err := a.resolveVolume(ctx, client, volumeRef, nil, "", "")
+			if legacyVolume != "" {
+				volID, _, err := a.resolveVolume(ctx, client, legacyVolume, nil, "", "")
 				if err != nil {
 					return err
 				}
@@ -405,7 +420,8 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 	f.StringVar(&memoryRaw, "memory", "", "Memory allocation (e.g. 4Gi, 4096; bare integer is MiB)")
 	f.StringVar(&diskRaw, "disk", "", "Root disk size (e.g. 20Gi, 20480; bare integer is MiB)")
 	f.StringVar(&networkMode, "network", "", "Outbound network mode: public_internet or deny_all")
-	f.StringVar(&volumeRef, "volume", "", "Persistent volume ID or name to attach at creation")
+	f.StringArrayVar(&volumeRefs, "volume", nil, "Volume ID and mount as vol_id:/path (repeatable), or one volume ID or name")
+	f.StringArrayVar(&packIDs, "pack", nil, "Pack ID (repeatable, at most four)")
 	f.StringVar(&mountPath, "mount-path", "", "Mount path for the attached volume (e.g. /data)")
 	f.BoolVar(&deleteVolume, "delete-volume", false, "Delete the attached volume when this workspace is deleted")
 	f.StringVar(&timeoutRaw, "timeout", "", "Auto-timeout duration (e.g. 1h, 30m, 3600; bare integer is seconds)")
@@ -818,10 +834,12 @@ func (a *App) newWorkspaceTimeoutCmd() *cobra.Command {
 
 func (a *App) newWorkspaceNetworkCmd() *cobra.Command {
 	var (
-		mode        string
-		wait        bool
-		noWait      bool
-		waitTimeout string
+		mode                             string
+		allow, deny, egresses, resolvers []string
+		drain                            int
+		wait                             bool
+		noWait                           bool
+		waitTimeout                      string
 	)
 
 	cmd := &cobra.Command{
@@ -842,6 +860,14 @@ func (a *App) newWorkspaceNetworkCmd() *cobra.Command {
 				return missingFlagError("--mode", "Pass --mode public_internet or --mode deny_all.")
 			}
 
+			params, err := parseWorkspaceNetwork(allow, deny, egresses, resolvers)
+			if err != nil {
+				return err
+			}
+			params.DrainSeconds, err = optionalIntFlag(cmd, "drain-seconds", drain, 0, 3600)
+			if err != nil {
+				return err
+			}
 			shouldWait, waitDur, err := resolveWait(cmd, wait, noWait, waitTimeout)
 			if err != nil {
 				return err
@@ -872,17 +898,19 @@ func (a *App) newWorkspaceNetworkCmd() *cobra.Command {
 				parsedMode = kibotos.NetworkMode(choice.Value)
 			}
 
-			ws, err := client.Workspaces.SetNetwork(ctx, wsID, kibotos.SetWorkspaceNetworkParams{
-				Mode: parsedMode,
-			})
+			params.Mode = parsedMode
+			if parsedMode == kibotos.NetworkModeDenyAll && len(allow)+len(deny)+len(egresses)+len(resolvers) != 0 {
+				return usageError("deny_all requires empty allow, deny, egress and resolver lists")
+			}
+			ws, err := client.Workspaces.SetNetwork(ctx, wsID, params)
 			if err != nil {
 				return err
 			}
 
-			if shouldWait && !ws.Network.Applied {
+			if shouldWait && ws.Status != kibotos.WorkspaceStatusStopped && !networkApplied(ws) {
 				p := a.printer()
 				stopSpin := p.StartSpinner(fmt.Sprintf("Waiting for network policy %q to apply on workspace %s...", parsedMode, ws.ID))
-				ws, err = a.waitWorkspaceNetworkApplied(ctx, client, ws.ID, parsedMode, waitDur)
+				ws, err = a.waitWorkspaceNetworkApplied(ctx, client, ws.ID, ws.Network, waitDur)
 				if err != nil {
 					stopSpin(fmt.Sprintf("Failed applying network policy on %s", ws.ID), false)
 					return err
@@ -895,6 +923,11 @@ func (a *App) newWorkspaceNetworkCmd() *cobra.Command {
 
 	f := cmd.Flags()
 	f.StringVar(&mode, "mode", "", "Outbound network mode: public_internet or deny_all")
+	f.StringArrayVar(&allow, "allow", nil, "Allowed outbound IP or CIDR (repeatable)")
+	f.StringArrayVar(&deny, "deny", nil, "Denied outbound IP or CIDR (repeatable)")
+	f.StringArrayVar(&egresses, "egress", nil, "Egress rule as egress_id=IP_OR_CIDR[,IP_OR_CIDR...]")
+	f.StringArrayVar(&resolvers, "resolver", nil, "Resolver as resolver_id (direct) or resolver_id=egress_id")
+	f.IntVar(&drain, "drain-seconds", 0, "Seconds to drain connections on the previous egress path (0–3600)")
 	addWaitFlags(cmd, &wait, &noWait, &waitTimeout, "the network policy is applied")
 	return cmd
 }
@@ -908,14 +941,31 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 	var (
 		volumeRef           string
 		mountPath           string
+		newMount            string
 		deleteWithWorkspace bool
 	)
 
 	attachCmd := &cobra.Command{
-		Use:   "attach [workspace]",
+		Use:   "attach [workspace] [volume]",
 		Short: "Attach a persistent volume to a workspace",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 {
+				if cmd.Flags().Changed("volume") || cmd.Flags().Changed("mount-path") {
+					return usageError("use the volume argument and --mount together")
+				}
+				if !cmd.Flags().Changed("mount") {
+					return missingFlagError("--mount", "Pass the absolute mount path, for example --mount /data.")
+				}
+				mount, err := validateMountPath(newMount)
+				if err != nil {
+					return err
+				}
+				return a.changeWorkspaceVolume(cmd.Context(), args[0], args[1], mount, deleteWithWorkspace)
+			}
+			if cmd.Flags().Changed("mount") {
+				return usageError("--mount requires a positional volume ID")
+			}
 			if err := validateNonEmptyFlag(cmd, "volume", volumeRef); err != nil {
 				return err
 			}
@@ -976,7 +1026,17 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 				return err
 			}
 
-			ws, err := client.Workspaces.AttachVolume(ctx, wsID, kibotos.AttachVolumeParams{
+			ws, err := client.Workspaces.Get(ctx, wsID)
+			if err != nil {
+				return err
+			}
+			if len(workspaceVolumes(ws)) > 0 {
+				if mountPath == "" {
+					return missingFlagError("--mount-path", "Pass an absolute mount path when the workspace already has an attached volume.")
+				}
+				return a.updateWorkspaceVolumeBindings(ctx, client, ws, volID, mountPath, deleteWithWorkspace)
+			}
+			ws, err = client.Workspaces.AttachVolume(ctx, wsID, kibotos.AttachVolumeParams{
 				ID:                  volID,
 				MountPath:           strings.TrimSpace(mountPath),
 				DeleteWithWorkspace: deleteWithWorkspace,
@@ -988,15 +1048,19 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 		},
 	}
 	af := attachCmd.Flags()
+	af.StringVar(&newMount, "mount", "", "Absolute path for the volume mount")
 	af.StringVar(&volumeRef, "volume", "", "Persistent volume ID or name to attach")
 	af.StringVar(&mountPath, "mount-path", "", "Mount path inside the workspace (e.g. /data)")
 	af.BoolVar(&deleteWithWorkspace, "delete-with-workspace", false, "Delete the volume when the workspace is deleted")
 
 	detachCmd := &cobra.Command{
-		Use:   "detach [workspace]",
-		Short: "Detach the persistent volume from a workspace",
-		Args:  cobra.MaximumNArgs(1),
+		Use:   "detach [workspace] [volume]",
+		Short: "Detach a volume by ID (omitting it detaches all volumes)",
+		Args:  cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 {
+				return a.changeWorkspaceVolume(cmd.Context(), args[0], args[1], "", false)
+			}
 			client, _, err := a.requireClient()
 			if err != nil {
 				return err
@@ -1122,11 +1186,19 @@ func (a *App) renderWorkspace(ws *kibotos.Workspace) error {
 	}
 	resStr := fmt.Sprintf("%d vCPU / %d MiB RAM / %d MiB disk",
 		ws.Resources.VCPUs, ws.Resources.MemoryMiB, ws.Resources.DiskMiB)
-	netStr := fmt.Sprintf("%s (applied=%t)", ws.Network.Mode, ws.Network.Applied)
-	volStr := "-"
-	if ws.Volume != nil {
-		volStr = fmt.Sprintf("%s at %s (delete_with_workspace=%t)",
-			ws.Volume.ID, output.EmptyDash(ws.Volume.MountPath), ws.Volume.DeleteWithWorkspace)
+	applied := "pending start"
+	if ws.Network.Applied != nil {
+		applied = fmt.Sprint(*ws.Network.Applied)
+	}
+	netStr := fmt.Sprintf("%s (applied=%s)", ws.Network.Mode, applied)
+	volumes := []string{}
+	for _, vol := range workspaceVolumes(ws) {
+		volumes = append(volumes, fmt.Sprintf("%s at %s (delete_with_workspace=%t)",
+			vol.ID, output.EmptyDash(vol.MountPath), vol.DeleteWithWorkspace))
+	}
+	packs := []string{}
+	for _, pack := range ws.Packs {
+		packs = append(packs, pack.ID+"@"+pack.Revision)
 	}
 	timeoutStr := "-"
 	if ws.Timeout != nil {
@@ -1141,7 +1213,8 @@ func (a *App) renderWorkspace(ws *kibotos.Workspace) error {
 		{Key: "Template", Value: tpl},
 		{Key: "Resources", Value: resStr},
 		{Key: "Network", Value: netStr},
-		{Key: "Volume", Value: volStr},
+		{Key: "Volumes", Value: output.EmptyDash(strings.Join(volumes, ", "))},
+		{Key: "Packs", Value: output.EmptyDash(strings.Join(packs, ", "))},
 		{Key: "Timeout", Value: timeoutStr},
 		{Key: "Labels", Value: output.FormatLabels(ws.Labels)},
 		{Key: "Created At", Value: output.FormatTime(ws.CreatedAt)},
@@ -1185,7 +1258,7 @@ func (a *App) waitWorkspaceDeleted(ctx context.Context, client *kibotos.Client, 
 	}
 }
 
-func (a *App) waitWorkspaceNetworkApplied(ctx context.Context, client *kibotos.Client, id string, mode kibotos.NetworkMode, timeout time.Duration) (*kibotos.Workspace, error) {
+func (a *App) waitWorkspaceNetworkApplied(ctx context.Context, client *kibotos.Client, id string, policy kibotos.WorkspaceNetwork, timeout time.Duration) (*kibotos.Workspace, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -1197,7 +1270,7 @@ func (a *App) waitWorkspaceNetworkApplied(ctx context.Context, client *kibotos.C
 		if err != nil {
 			return nil, err
 		}
-		if ws.Network.Mode == mode && ws.Network.Applied {
+		if networkApplied(ws) && sameNetworkPolicy(ws.Network, policy) {
 			return ws, nil
 		}
 		if ws.Status == kibotos.WorkspaceStatusFailed {

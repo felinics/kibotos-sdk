@@ -1,14 +1,14 @@
 ---
 title: Go SDK
-description: Install, configure, and get started with the official zero-dependency Go SDK for Kibotos.
+description: Install, configure, and get started with the official Go SDK for Kibotos.
 ---
 
-`github.com/felinics/kibotos-sdk/sdks/go` (`package kibotos`) is the official zero-dependency Go SDK for the **Kibotos** v1 API. It uses only the Go standard library and supports idiomatic `context.Context` cancellation, functional options, generic `Nullable[T]` PATCH fields, and Go `iter.Seq2` pagination iterators.
+`github.com/felinics/kibotos-sdk/sdks/go` (`package kibotos`) is the official Go SDK for the **Kibotos** v1 API. The SDK supports idiomatic `context.Context` cancellation, functional options, generic `Nullable[T]` PATCH fields, and Go `iter.Seq2` pagination iterators.
 
 ## Requirements
 
 - **Go**: 1.24 or later
-- **External dependencies**: None (standard library only)
+- **WebSocket dependency** — `github.com/coder/websocket`
 
 ## Installation
 
@@ -131,11 +131,15 @@ When using `NewClientFromEnv(opts...)`, explicit options passed to `opts` take p
 
 | Service | Guide | Methods |
 | --- | --- | --- |
-| `client.Workspaces` | [Workspaces](./workspaces) | `Create`, `List`, `Iter`, `Get`, `Update`, `Delete`, `Start`, `Stop`, `SetTimeout`, `SetNetwork`, `AttachVolume`, `DetachVolume`, `Wait` |
+| `client.Workspaces` | [Workspaces](./workspaces) | `Create`, `List`, `Iter`, `Get`, `Update`, `Delete`, `Start`, `Stop`, `SetTimeout`, `SetNetwork`, `SetVolumes`, `AttachVolume`, `DetachVolume`, `SetPacks`, `GetMetrics`, `Wait` |
+| `client.Workspaces` | Exec, files, proxy, and WebSockets | `Exec`, `ExecStream`, `ListFiles`, `StatFile`, `ReadFile`, `WriteFile`, `MakeDir`, `MoveFile`, `DeleteFile`, `Proxy`, `DialWS`, `DialTunnel`, `DialDesktopVNC` |
 | `client.Volumes` | [Volumes](./volumes) | `Create`, `List`, `Iter`, `Get`, `Update`, `Resize`, `Delete`, `Wait` |
 | `client.Exposures` | [Exposures](./exposures) | `Create`, `List`, `Iter`, `Get`, `Revoke` |
 | `client.Templates` | [Templates & Zones](./templates-and-zones) | `List`, `Iter`, `Get`, `ListRevisions`, `GetRevision` |
 | `client.Zones` | [Templates & Zones](./templates-and-zones) | `List`, `Iter` |
+| `client.Packs` | Pack catalog | `List`, `Get`, `GetRevision` |
+| `client.Egresses` | Outbound SOCKS5 egresses | `Create`, `List`, `Get`, `Replace`, `Update`, `Delete` |
+| `client.Resolvers` | DNS resolvers | `Create`, `List`, `Get`, `Replace`, `Update`, `Delete` |
 
 ## Per-Request Options
 

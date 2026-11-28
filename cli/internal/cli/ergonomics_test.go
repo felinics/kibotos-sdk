@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/felinics/kibotos-sdk/cli/internal/testhttp"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -112,7 +112,7 @@ func TestDefaultWaitAndNoWaitBehavior(t *testing.T) {
 	t.Parallel()
 
 	var waitHits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workspaces":
 			var body kibotos.CreateWorkspaceParams
@@ -241,7 +241,7 @@ func TestInteractiveGuidedFlowsAndConfirmations(t *testing.T) {
 		Zone:     "global-1",
 		Template: kibotos.WorkspaceTemplate{ID: "python-3.12"},
 		Status:   kibotos.WorkspaceStatusAvailable,
-		Network:  kibotos.WorkspaceNetwork{Mode: kibotos.NetworkModePublicInternet, Applied: true},
+		Network:  kibotos.WorkspaceNetwork{Mode: kibotos.NetworkModePublicInternet, Applied: kibotos.Ptr(true)},
 	}
 	ws2 := kibotos.Workspace{
 		ID:       "wks_beta",
@@ -249,10 +249,10 @@ func TestInteractiveGuidedFlowsAndConfirmations(t *testing.T) {
 		Zone:     "global-1",
 		Template: kibotos.WorkspaceTemplate{ID: "node-22"},
 		Status:   kibotos.WorkspaceStatusStopped,
-		Network:  kibotos.WorkspaceNetwork{Mode: kibotos.NetworkModePublicInternet, Applied: true},
+		Network:  kibotos.WorkspaceNetwork{Mode: kibotos.NetworkModePublicInternet, Applied: kibotos.Ptr(true)},
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/templates":
 			writeJSON(w, http.StatusOK, kibotos.MultiZonePage[kibotos.Template]{
@@ -269,7 +269,7 @@ func TestInteractiveGuidedFlowsAndConfirmations(t *testing.T) {
 				Zone:     "eu-1",
 				Template: kibotos.WorkspaceTemplate{ID: lastCreate.Template.ID},
 				Status:   kibotos.WorkspaceStatusAvailable,
-				Network:  kibotos.WorkspaceNetwork{Mode: kibotos.NetworkModeDenyAll, Applied: true},
+				Network:  kibotos.WorkspaceNetwork{Mode: kibotos.NetworkModeDenyAll, Applied: kibotos.Ptr(true)},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces":
 			writeJSON(w, http.StatusOK, kibotos.MultiZonePage[kibotos.Workspace]{
@@ -372,7 +372,7 @@ func TestInteractiveGuidedFlowsAndConfirmations(t *testing.T) {
 func TestNameResolutionAndAgentEnvVars(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces":
 			writeJSON(w, http.StatusOK, kibotos.MultiZonePage[kibotos.Workspace]{
@@ -426,7 +426,7 @@ func TestUserSessionDeviceLoginOrgSwitchAndLogout(t *testing.T) {
 	var logoutCalls atomic.Int32
 	var lastOrgHeader string
 
-	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	apiSrv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/zones" {
 			if r.Header.Get("Authorization") != "Bearer kbs_user_session_secret_9876543210" {
 				writeAPIError(w, http.StatusUnauthorized, "unauthenticated", "bad session", false)
@@ -448,7 +448,7 @@ func TestUserSessionDeviceLoginOrgSwitchAndLogout(t *testing.T) {
 		{"id": "org_beta", "display_name": "Beta Org", "region": "global", "role": "member", "status": "active"},
 	}
 
-	consoleSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	consoleSrv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/auth/device/start":
 			writeJSON(w, http.StatusCreated, map[string]any{
@@ -489,7 +489,7 @@ func TestUserSessionDeviceLoginOrgSwitchAndLogout(t *testing.T) {
 	}))
 	defer consoleSrv.Close()
 
-	h := newTestHarness(t, apiSrv.Client())
+	h := newTestHarness(t, apiSrv.Client(consoleSrv))
 
 	// 1. Device login receives user_session token (kbs_...).
 	code, stdout, stderr := h.run("login", "--console-url", consoleSrv.URL, "--json")

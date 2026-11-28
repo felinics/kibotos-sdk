@@ -171,24 +171,39 @@ ws, err = client.Workspaces.SetTimeout(ctx, ws.ID, kibotos.SetWorkspaceTimeoutPa
 ## Configure Outbound Network
 
 ```go
-ws, err = client.Workspaces.SetNetwork(ctx, ws.ID, kibotos.SetWorkspaceNetworkParams{
+ws, err = client.Workspaces.SetNetwork(ctx, ws.ID, kibotos.WorkspaceNetworkInput{
 	Mode: kibotos.NetworkModeDenyAll, // or kibotos.NetworkModePublicInternet
 })
-fmt.Println(ws.Network.Mode, ws.Network.Applied)
+fmt.Println(ws.Network.Mode)
+if ws.Network.Applied != nil {
+	fmt.Println(*ws.Network.Applied)
+}
 ```
 
 ## Attach and Detach Volumes
 
-Volumes must be in the same zone as the workspace and attached or detached while the workspace is stopped:
+Volumes must be in the same zone as the workspace. Use `SetVolumes` on a stopped or failed workspace to replace the full attachment list. Include every binding you want to keep, and pass an empty or nil slice to detach all volumes.
 
 ```go
-// Attach volume
-ws, err = client.Workspaces.AttachVolume(ctx, ws.ID, kibotos.AttachVolumeParams{
-	ID:                  "vol_01j9...",
-	MountPath:           "/data",
-	DeleteWithWorkspace: false,
+ws, err = client.Workspaces.SetVolumes(ctx, ws.ID, []kibotos.WorkspaceVolumeInput{
+	{ID: "vol_data", MountPath: "/data"},
+	{ID: "vol_cache", MountPath: "/cache", DeleteWithWorkspace: true},
 })
-
-// Detach volume
-ws, err = client.Workspaces.DetachVolume(ctx, ws.ID)
 ```
+
+**Warning:** `AttachVolume` (`PUT /v1/workspaces/{id}/volume`) replaces all existing attachments with a single volume. `DetachVolume` (`DELETE /v1/workspaces/{id}/volume`) detaches all volumes. Use `SetVolumes` to add or remove individual bindings on a multi-volume workspace.
+
+## Proxy HTTP Requests
+
+`Proxy` forwards an authenticated request to a loopback port inside an available workspace. Supply an unescaped path and optional query parameters. Use an empty path for the service root.
+
+```go
+resp, err := client.Workspaces.Proxy(ctx, ws.ID, 8080, http.MethodGet, "/health", nil, nil)
+if err != nil {
+	log.Fatal(err)
+}
+defer resp.Body.Close()
+fmt.Println(resp.StatusCode)
+```
+
+The SDK returns the response for every HTTP status. It sends a request without SDK retries and leaves redirects to the caller.

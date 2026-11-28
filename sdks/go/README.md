@@ -1,6 +1,6 @@
 # Kibotos Go SDK
 
-Official zero-dependency Go SDK for the Kibotos v1 API (Go 1.24+).
+Official Go SDK for the Kibotos v1 API (Go 1.24+). WebSocket support uses `github.com/coder/websocket`.
 
 ## Installation
 
@@ -84,7 +84,7 @@ client, err := kibotos.NewClient(
 
 ## Pagination Iterators
 
-Every listable service provides an `Iter` method returning `iter.Seq2[T, error]`:
+Zones, Templates, Workspaces, Volumes, and Exposures provide an `Iter` method returning `iter.Seq2[T, error]`. Use `List` and the returned `NextPageToken` for Packs, Egresses, and Resolvers.
 
 ```go
 for ws, err := range client.Workspaces.Iter(ctx, &kibotos.WorkspaceListParams{
@@ -100,14 +100,45 @@ for ws, err := range client.Workspaces.Iter(ctx, &kibotos.WorkspaceListParams{
 
 ## Idempotency, Retries & Error Handling
 
-- Every `POST` mutation automatically attaches a UUID v4 `Idempotency-Key` (override with `kibotos.WithIdempotencyKey("...")`) and reuses the same key across retry attempts.
-- Retryable API errors (`retryable: true`), HTTP `429` (honoring `Retry-After`), `500`/`502`/`503`/`504`, and transient network errors are retried with exponential backoff and jitter.
+- Control-plane `POST` mutations and egress and resolver replacements attach a UUID v4 `Idempotency-Key` and reuse it across retry attempts. Override the key with `kibotos.WithIdempotencyKey("...")`.
+- On retry-enabled requests, retryable API errors (`retryable: true`), HTTP `429` (honoring `Retry-After`), `500`/`502`/`503`/`504`, and transient network errors are retried with exponential backoff and jitter.
+- Process execution and file mutations send one request. File content transfers and SSE use the caller’s context and any timeout configured on a custom HTTP client. Set a deadline on the caller’s context to bound the entire operation.
 - Inspect errors with `errors.As(err, &apiErr)` or helpers `kibotos.IsNotFound(err)`, `kibotos.IsRetryable(err)`, `kibotos.IsRateLimited(err)`, `kibotos.IsWaitTimeout(err)`, and `kibotos.IsUnauthenticated(err)`.
 
 ## Services Covered
 
 - `client.Zones`: `List`, `Iter`
 - `client.Templates`: `List`, `Iter`, `Get`, `ListRevisions`, `GetRevision`
-- `client.Workspaces`: `Create`, `List`, `Iter`, `Get`, `Update`, `Delete`, `Start`, `Stop`, `SetTimeout`, `SetNetwork`, `AttachVolume`, `DetachVolume`, `Wait`
+- `client.Workspaces`: `Create`, `List`, `Iter`, `Get`, `Update`, `Delete`, `Start`, `Stop`, `SetTimeout`, `SetNetwork`, `AttachVolume`, `DetachVolume`, `SetVolumes`, `SetPacks`, `GetMetrics`, `Wait`, `Exec`, `ExecStream`, `ListFiles`, `StatFile`, `ReadFile`, `WriteFile`, `MakeDir`, `MoveFile`, `DeleteFile`, `Proxy`, `DialWS`, `DialTunnel`, `DialDesktopVNC`
 - `client.Volumes`: `Create`, `List`, `Iter`, `Get`, `Update`, `Resize`, `Delete`, `Wait`
 - `client.Exposures`: `Create`, `List`, `Iter`, `Get`, `Revoke`
+- `client.Packs` provides `List`, `Get`, and `GetRevision`.
+- `client.Egresses` and `client.Resolvers` each provide `Create`, `List`, `Get`, `Replace`, `Update`, and `Delete`. `Replace` sends the complete protocol configuration. `Update` changes display names and labels.
+
+## Workspace configuration
+
+Create workspaces with `CreateWorkspaceRequest.Volumes` and `Packs`. The legacy `Volume` field remains available for single-volume callers. Resize stopped or failed workspaces with `UpdateWorkspaceRequest.Resources`. `SetVolumes` and `SetPacks` accept empty slices to clear the corresponding bindings. Pack changes apply on the next start. `SetNetwork` takes the complete `WorkspaceNetworkInput`. `DrainSeconds: kibotos.Ptr(0)` requests zero drain time. The response field `Network.Applied` is a `*bool` and is nil while the workspace is stopped.
+
+## Workspace data plane
+
+```go
+result, err := client.Workspaces.Exec(ctx, workspaceID, kibotos.ExecRequest{
+    Argv: []string{"python3", "--version"},
+})
+if err != nil {
+    return err
+}
+fmt.Print(result.Stdout) // Inspect result.ExitCode for the remote status.
+
+file, err := client.Workspaces.ReadFile(ctx, workspaceID, "/app/output.bin",
+    kibotos.ReadFileOptions{Range: "bytes=0-1023"})
+if err != nil {
+    return err
+}
+defer file.Close()
+_, err = io.Copy(dst, file)
+```
+
+`ExecStream` calls a handler for each SSE event, including `started`, output, heartbeats and the terminal `exited` or `error` event. The handler can return an error to stop processing. `ReadFile` exposes the HTTP status and response headers alongside the stream. `WriteFile` takes an `io.Reader` and supports mode, user and create-only options.
+
+`DialWS` opens the multiplexed channel. Use `OpenProcess` with `start` or `attach`, `OpenFSWatch`, and `OpenTunnel` with distinct positive stream IDs. `Read` yields either JSON control events or binary frames. `WriteControl` sends controls such as PTY resize. `WriteBinary` encodes the version byte, four-byte big-endian stream ID, and one-byte channel before the payload. Keep a reader running to process WebSocket pings. `DialTunnel` takes a guest TCP port or Unix path. It and `DialDesktopVNC` exchange raw binary messages with no multiplexing header.

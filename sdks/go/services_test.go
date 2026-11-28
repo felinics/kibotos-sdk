@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -15,7 +14,7 @@ import (
 )
 
 func TestZonesListAndIter(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/zones" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -34,7 +33,7 @@ func TestZonesListAndIter(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL))
+	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL), kibotos.WithHTTPClient(srv.Client()))
 	var zones []kibotos.Zone
 	for z, err := range c.Zones.Iter(context.Background(), &kibotos.ZoneListParams{Limit: 1}) {
 		if err != nil {
@@ -54,14 +53,14 @@ func TestZonesListAndIter(t *testing.T) {
 
 	// Early break should stop before fetching the second page.
 	var pageCalls atomic.Int32
-	srvEarly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srvEarly := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pageCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[{"id":"global-1"},{"id":"global-2"}],"next_page_token":"p2"}`))
 	}))
 	defer srvEarly.Close()
 
-	cEarly, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srvEarly.URL))
+	cEarly, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srvEarly.URL), kibotos.WithHTTPClient(srvEarly.Client()))
 	var first string
 	for z, err := range cEarly.Zones.Iter(context.Background(), nil) {
 		if err != nil {
@@ -98,7 +97,7 @@ func TestUpdateParamsPartialSerialization(t *testing.T) {
 }
 
 func TestTemplatesAllEndpoints(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/templates":
@@ -132,7 +131,7 @@ func TestTemplatesAllEndpoints(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL))
+	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL), kibotos.WithHTTPClient(srv.Client()))
 	ctx := context.Background()
 
 	page, err := c.Templates.List(ctx, &kibotos.TemplateListParams{
@@ -179,7 +178,7 @@ func TestTemplatesAllEndpoints(t *testing.T) {
 }
 
 func TestWorkspacesAllEndpoints(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workspaces":
@@ -264,7 +263,7 @@ func TestWorkspacesAllEndpoints(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL))
+	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL), kibotos.WithHTTPClient(srv.Client()))
 	ctx := context.Background()
 
 	ws, err := c.Workspaces.Create(ctx, kibotos.CreateWorkspaceParams{
@@ -356,7 +355,7 @@ func TestWorkspacesWaitChunksAndErrors(t *testing.T) {
 	var waitCalls atomic.Int32
 	var seenTimeouts []string
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/workspaces/wks_loop/wait":
@@ -390,7 +389,7 @@ func TestWorkspacesWaitChunksAndErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL))
+	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL), kibotos.WithHTTPClient(srv.Client()))
 	ctx := context.Background()
 
 	// 2-minute timeout -> server chunks capped at 60s, loops cleanly across 408 wait_timeout.
@@ -440,7 +439,7 @@ func TestWorkspacesWaitChunksAndErrors(t *testing.T) {
 
 func TestVolumesAndExposuresAllEndpoints(t *testing.T) {
 	var volWaitCalls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/volumes":
@@ -498,7 +497,7 @@ func TestVolumesAndExposuresAllEndpoints(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL))
+	c, _ := kibotos.NewClient("kb_test", kibotos.WithBaseURL(srv.URL), kibotos.WithHTTPClient(srv.Client()))
 	ctx := context.Background()
 
 	vol, err := c.Volumes.Create(ctx, kibotos.CreateVolumeParams{
