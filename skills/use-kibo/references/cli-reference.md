@@ -6,10 +6,15 @@ Available on every `kibo` command:
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--json` | `false` | Write strictly valid JSON to `stdout` (shorthand for `-o json`) |
-| `-o, --output <format>` | `table` | Output format: `table` or `json` |
+| `--json` | `false` | Write strictly valid JSON to `stdout` (shorthand for `-o json`) and disable interactive prompts |
+| `-o, --output <format>` | `table` | Output format: `table` or `json` (env: `KIBO_OUTPUT` / `KIBOTOS_OUTPUT`) |
+| `-q, --quiet` | `false` | Print only resource IDs to `stdout` and suppress progress messages |
+| `--no-input` | `false` | Disable interactive prompts and fail fast on missing inputs (env: `KIBO_NO_INPUT` / `KIBOTOS_NO_INPUT` / `CI`) |
+| `-y, --yes` | `false` | Skip interactive `[y/N]` confirmation prompts for destructive actions |
+| `--no-color` | `false` | Disable colored output (also respects `NO_COLOR`) |
 | `--profile <name>` | active profile | Named profile from `config.json` |
-| `--api-key <key>` | — | Override Kibotos API key (`kb_...`) for this invocation |
+| `--org <id>` | active profile org | Override target organization ID (`X-Kibotos-Organization`, env: `KIBO_ORG` / `KIBOTOS_ORG`) |
+| `--api-key <key>` | — | Override Kibotos API key (`kb_...`) or session token (`kbs_...`) for this invocation |
 | `--api-url <url>` | `https://api.kibo.to/v1` | Override Kibotos v1 API base URL |
 
 ## Configuration & Precedence
@@ -81,11 +86,16 @@ Show active profile, auth source, organization, email, API URL, masked key, and 
 | --- | --- |
 | `--offline` | Skip live `GET /v1/zones` connectivity check |
 
+### `kibo org` (aliases: `orgs`, `organization`, `organizations`)
+
+- `kibo org list` — List organizations accessible to your signed-in CLI user session (`*` marks active org)
+- `kibo org use [id-or-name]` — Switch the active organization for the current profile (prompts interactively if omitted in TTY)
+
 ### `kibo profile` (alias: `profiles`)
 
 - `kibo profile list` — List saved profiles (`*` marks active profile)
-- `kibo profile use <name>` — Set active profile
-- `kibo profile delete <name>` — Delete a saved profile
+- `kibo profile use [name]` — Set active profile
+- `kibo profile delete [name]` — Delete a saved profile
 
 ### `kibo version`
 
@@ -114,66 +124,70 @@ Show CLI version, Go SDK version, Go runtime, and platform.
 
 ### `kibo workspace` (aliases: `ws`, `workspaces`)
 
-- `kibo workspace list [--status <s>] [--zone <z>] [--label k=v] [--limit <n>] [--page-token <tok>]`
+All workspace commands accepting `[id-or-name]` accept either a `wks_...` ID or a unique workspace name (or open an inline arrow-key selector in interactive TTY mode). Async mutations (`create`, `start`, `stop`, `delete`, `network`) **wait until completion by default**; pass `--no-wait` (or `--wait=false`) to return immediately.
+
+- `kibo workspace list [-s|--status <s>] [-z|--zone <z>] [-l|--label k=v] [--limit <n>] [--page-token <tok>]`
   - `--label` is repeatable.
   - Status values: `creating`, `available`, `stopping`, `stopped`, `starting`, `deleting`, `failed`, `unknown`.
-- `kibo workspace get <id>`
-- `kibo workspace create --template <id> [flags]`
-  - `--template <id>` *(required)*: Template ID
+- `kibo workspace get [id-or-name]`
+- `kibo workspace create [-t|--template <id>] [flags]`
+  - `-t, --template <id>` *(prompted in TTY; required non-interactively)*: Template ID (supports `template@revision`)
   - `--revision <rev>`: Pin specific template revision
-  - `--name <name>`: Human-readable workspace name
-  - `--zone <zone>`: Target zone ID (defaults to org default zone)
+  - `-n, --name <name>`: Human-readable workspace name
+  - `-z, --zone <zone>`: Target zone ID (defaults to org default zone)
   - `--vcpus <n>`: vCPU count override
-  - `--memory <mib>`: Memory allocation in MiB
-  - `--disk <mib>`: Root disk size in MiB
+  - `--memory <size>`: Memory allocation (`4Gi`, `4096`; bare integer is MiB)
+  - `--disk <size>`: Root disk size (`20Gi`, `20480`; bare integer is MiB)
   - `--network <mode>`: `public_internet` or `deny_all`
-  - `--volume <vol_id>`: Existing volume ID to attach at creation
+  - `--volume <vol>`: Existing volume ID or name to attach at creation
   - `--mount-path <path>`: Mount path for `--volume` (e.g. `/data`)
   - `--delete-volume`: Delete the attached volume when the workspace is deleted (requires `--volume`)
-  - `--timeout <sec>`: Auto-timeout duration in seconds
+  - `--timeout <dur>`: Auto-timeout duration (`1h`, `30m`, `3600`; bare integer is seconds)
   - `--timeout-action <action>`: `stop` or `delete` (requires `--timeout`)
-  - `--label k=v`: Workspace label (repeatable)
-  - `--wait`: Block until status reaches `available`
-  - `--wait-timeout <sec>`: Max wait seconds (default `300`)
-- `kibo workspace update <id> [--name <n>] [--clear-name] [--label k=v] [--unset-label k]`
+  - `-l, --label k=v`: Workspace label (repeatable)
+  - `--wait` *(default `true`)* / `--no-wait`: Block until status reaches `available` (default) or return immediately
+  - `--wait-timeout <dur>`: Max wait duration (default `300s` / `5m`)
+- `kibo workspace update [id-or-name] [-n|--name <n>] [--clear-name] [-l|--label k=v] [--unset-label k]`
   - `--name` and `--clear-name` are mutually exclusive. `--label` and `--unset-label` are repeatable.
-- `kibo workspace delete <id> [--wait] [--wait-timeout <sec>]`
-  - With `--wait`, polls until deletion completes (`404`) and returns `"status": "deleted"`.
-- `kibo workspace start <id> [--timeout <sec>] [--timeout-action <stop|delete>] [--wait] [--wait-timeout <sec>]`
-- `kibo workspace stop <id> [--force] [--wait] [--wait-timeout <sec>]`
-- `kibo workspace timeout <id> --seconds <sec> [--action <stop|delete>]`
-- `kibo workspace network <id> --mode <public_internet|deny_all> [--wait] [--wait-timeout <sec>]`
-  - With `--wait`, polls until `network.applied` is `true`.
-- `kibo workspace volume attach <workspace_id> --volume <vol_id> [--mount-path </data>] [--delete-with-workspace]`
-- `kibo workspace volume detach <workspace_id>`
-- `kibo workspace wait <id> --status <s1,s2> [--timeout <sec>]`
-  - `--status` accepts comma-separated values or repeated flags (default `--timeout`: `30`).
+- `kibo workspace delete [id-or-name] [--no-wait] [--wait-timeout <dur>] [-y]`
+  - Waits by default until deletion completes (`404`) and returns `"status": "deleted"`. Confirms in TTY unless `-y`.
+- `kibo workspace start [id-or-name] [--timeout <dur>] [--timeout-action <stop|delete>] [--no-wait] [--wait-timeout <dur>]`
+- `kibo workspace stop [id-or-name] [--force] [--no-wait] [--wait-timeout <dur>] [-y]`
+- `kibo workspace timeout [id-or-name] --seconds <dur> [--action <stop|delete>]`
+- `kibo workspace network [id-or-name] --mode <public_internet|deny_all> [--no-wait] [--wait-timeout <dur>]`
+  - Waits by default until `network.applied` is `true`.
+- `kibo workspace volume attach [workspace] --volume <vol> [--mount-path </data>] [--delete-with-workspace]`
+- `kibo workspace volume detach [workspace]`
+- `kibo workspace wait [id-or-name] -s|--status <s1,s2> [--timeout <dur>]`
+  - `--status` accepts comma-separated values or repeated flags (default `--timeout`: `30s`).
 
 ## Volume Commands
 
 ### `kibo volume` (aliases: `vol`, `volumes`)
 
-- `kibo volume list [--zone <z>] [--attached <true|false>] [--label k=v] [--limit <n>] [--page-token <tok>]`
+All volume commands accepting `[id-or-name]` accept either a `vol_...` ID or a unique volume name (or prompt in TTY). Async mutations (`create`, `resize`, `delete`) **wait by default**; pass `--no-wait` to return immediately.
+
+- `kibo volume list [-z|--zone <z>] [--attached <true|false>] [-l|--label k=v] [--limit <n>] [--page-token <tok>]`
   - Status values: `creating`, `available`, `attached`, `resizing`, `deleting`, `failed`, `lost`, `unknown` (native Kibotos 1:1 semantics: `workspace_id` expresses binding; `available` means ready and not mounted to a running workspace; `attached` means mounted to a running workspace; `lost` means storage pool lost).
-- `kibo volume get <id>`
-- `kibo volume create --size <gib> [--name <n>] [--zone <z>] [--label k=v] [--wait] [--wait-timeout <sec>]`
-  - With `--wait`, waits for status `available`.
-- `kibo volume update <id> [--name <n>] [--clear-name] [--label k=v] [--unset-label k]`
-- `kibo volume resize <id> --size <gib> [--wait] [--wait-timeout <sec>]`
-  - Grows an `available` volume to a larger size in GiB. With `--wait`, waits for `available`.
-- `kibo volume delete <id> [--wait] [--wait-timeout <sec>]`
-- `kibo volume wait <id> --status <s1,s2> [--timeout <sec>]` (default `--timeout`: `30`)
+- `kibo volume get [id-or-name]`
+- `kibo volume create -s|--size <size> [-n|--name <n>] [-z|--zone <z>] [-l|--label k=v] [--no-wait] [--wait-timeout <dur>]`
+  - `--size` accepts bare GiB (`50`) or units (`50Gi`, `1Ti`). Waits for `available` by default.
+- `kibo volume update [id-or-name] [-n|--name <n>] [--clear-name] [-l|--label k=v] [--unset-label k]`
+- `kibo volume resize [id-or-name] -s|--size <size> [--no-wait] [--wait-timeout <dur>]`
+  - Grows an `available` volume to a larger size. Waits for `available` by default.
+- `kibo volume delete [id-or-name] [--no-wait] [--wait-timeout <dur>] [-y]`
+- `kibo volume wait [id-or-name] -s|--status <s1,s2> [--timeout <dur>]` (default `--timeout`: `30s`)
 
 ## Exposure Commands
 
 ### `kibo exposure` (aliases: `exp`, `exposures`)
 
-- `kibo exposure list <workspace_id> [--include-revoked] [--limit <n>] [--page-token <tok>]`
+- `kibo exposure list [workspace] [--include-revoked] [--limit <n>] [--page-token <tok>]`
   - Status values: `active`, `revoked`, `expired`.
-- `kibo exposure get <workspace_id> <exposure_id>`
-- `kibo exposure create <workspace_id> --port <1-65535> [--ttl <sec>]`
-  - `--ttl` defaults to `3600` on the API when omitted.
-- `kibo exposure revoke <workspace_id> <exposure_id>`
+- `kibo exposure get [workspace] [exposure_id]`
+- `kibo exposure create [workspace] [port] [-p|--port <1-65535>] [--ttl <dur>]`
+  - Port can be passed via `-p`/`--port` or as a second positional argument. `--ttl` accepts durations (`1h`, `30m`) or seconds (API default: `3600`).
+- `kibo exposure revoke [workspace] [exposure_id] [-y]`
 
 ## Common API Error Codes
 

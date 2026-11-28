@@ -11,15 +11,15 @@ Aliases: `vol`, `volumes`.
 
 ### Create a Volume
 
-`--size` (in GiB) is required. Pass `--wait` to wait until status reaches `available` (`--wait-timeout` defaults to `300`):
+`-s`/`--size` accepts GiB integers (`50`) or units (`50Gi`, `1Ti`), and is prompted interactively in a TTY if omitted. Waits until status reaches `available` by default (`--no-wait` returns immediately; `--wait-timeout` defaults to `5m`):
 
 ```bash
 kibo vol create \
-  --size 50 \
-  --name datasets-cache \
-  --zone global-1 \
-  --label team=ml \
-  --wait --json
+  -s 50Gi \
+  -n datasets-cache \
+  -z global-1 \
+  -l team=ml \
+  --json
 ```
 
 ### List and Inspect Volumes
@@ -49,10 +49,10 @@ kibo vol update vol_01j9... --clear-name
 
 ### Resize a Volume
 
-Grows an `available` volume to a larger size in GiB (volumes bound to a stopped/failed workspace remain `available` and can be resized). With `--wait`, blocks until status returns to `available`:
+Grows an `available` volume to a larger size (accepts bare GiB or `100Gi`/`1Ti`). Waits until status returns to `available` by default (`--no-wait` to skip):
 
 ```bash
-kibo vol resize vol_01j9... --size 100 --wait
+kibo vol resize datasets-cache -s 100Gi
 ```
 
 ### Delete and Wait on a Volume
@@ -60,11 +60,11 @@ kibo vol resize vol_01j9... --size 100 --wait
 Valid volume statuses follow native Kibotos 1:1 semantics: `creating`, `available`, `attached`, `resizing`, `deleting`, `failed`, `lost`, `unknown`. `workspace_id` expresses workspace binding; `available` means ready and not mounted to a running workspace; `attached` means mounted to a running workspace; `lost` means the underlying storage pool was lost (read/delete only).
 
 ```bash
-# Wait explicitly for target status(es) (default --timeout: 30)
-kibo vol wait vol_01j9... --status available,failed --timeout 120
+# Wait explicitly for target status(es) (default --timeout: 30s)
+kibo vol wait vol_01j9... --status available,failed --timeout 2m
 
-# Delete an unbound volume and wait until removed
-kibo vol delete vol_01j9... --wait
+# Delete an unbound volume (waits until removed by default; prompts confirmation in TTY unless -y)
+kibo vol delete vol_01j9...
 ```
 
 ## HTTPS Port Exposures (`kibo exposure`)
@@ -75,9 +75,11 @@ Expose any TCP port (`1`–`65535`) inside an `available` workspace on a tempora
 
 ### Create an Exposure
 
-`--port` is required; `--ttl` is optional (API default: `3600` seconds):
+Pass workspace (ID or name) and port via `-p`/`--port` or as the second positional argument (both prompted interactively in a TTY if omitted). `--ttl` accepts durations (`1h`, `30m`) or seconds (API default: `3600` seconds):
 
 ```bash
+kibo exp create wks_01j9... 8080 --ttl 1h --json
+# Equivalent:
 kibo exp create wks_01j9... --port 8080 --ttl 3600 --json
 ```
 

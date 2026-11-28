@@ -34,15 +34,50 @@ type DeviceStartResponse struct {
 	Interval                int    `json:"interval"`
 }
 
+// OrganizationSummary describes an organization returned by Console API or device login.
+type OrganizationSummary struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Region      string `json:"region"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+}
+
 // DeviceTokenResponse is returned by POST /api/auth/device/token on approval.
+// Modern servers issue a user-level CLI session token (access_token = kbs_...);
+// legacy api_key responses remain supported for backwards compatibility.
 type DeviceTokenResponse struct {
-	Status           string `json:"status"`
-	APIKey           string `json:"api_key"`
-	KeyID            string `json:"key_id"`
-	OrganizationID   string `json:"organization_id"`
-	OrganizationName string `json:"organization_name"`
-	UserEmail        string `json:"user_email"`
-	APIURL           string `json:"api_url"`
+	Status           string                `json:"status"`
+	TokenType        string                `json:"token_type,omitempty"`
+	AccessToken      string                `json:"access_token,omitempty"`
+	SessionID        string                `json:"session_id,omitempty"`
+	UserID           string                `json:"user_id,omitempty"`
+	UserName         string                `json:"user_name,omitempty"`
+	UserEmail        string                `json:"user_email,omitempty"`
+	APIKey           string                `json:"api_key,omitempty"`
+	KeyID            string                `json:"key_id,omitempty"`
+	OrganizationID   string                `json:"organization_id,omitempty"`
+	OrganizationName string                `json:"organization_name,omitempty"`
+	Organizations    []OrganizationSummary `json:"organizations,omitempty"`
+	APIURL           string                `json:"api_url,omitempty"`
+}
+
+// EffectiveCredential returns the issued bearer credential and its type ("user_session" or "api_key").
+func (r *DeviceTokenResponse) EffectiveCredential() (token string, authType string) {
+	if r == nil {
+		return "", ""
+	}
+	if strings.TrimSpace(r.AccessToken) != "" {
+		tt := strings.TrimSpace(r.TokenType)
+		if tt == "" {
+			tt = "user_session"
+		}
+		return strings.TrimSpace(r.AccessToken), tt
+	}
+	if strings.TrimSpace(r.APIKey) != "" {
+		return strings.TrimSpace(r.APIKey), "api_key"
+	}
+	return "", ""
 }
 
 // DeviceAuthError represents an error returned by the device authorization endpoints.
@@ -240,8 +275,8 @@ func (c *DeviceClient) Poll(ctx context.Context, start *DeviceStartResponse) (*D
 			if tok.Status == "authorization_pending" {
 				continue
 			}
-			if tok.APIKey == "" {
-				return nil, errors.New("device authorization approved without an API key")
+			if cred, _ := tok.EffectiveCredential(); cred == "" {
+				return nil, errors.New("device authorization approved without a credential token")
 			}
 			return &tok, nil
 
@@ -326,6 +361,62 @@ func parseDeviceError(status int, body []byte) *DeviceAuthError {
 		Message: msg,
 		Status:  status,
 	}
+}
+
+// ListOrganizations fetches organizations accessible to the signed-in user session (Bearer kbs_...).
+func (c *DeviceClient) ListOrganizations(ctx context.Context, accessToken string) ([]OrganizationSummary, error) {
+	endpoint := c.ConsoleURL + "/api/organizations"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build list organizations request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
+	req.Header.Set("Accept", "application/json")
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list organizations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read organizations response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, parseDeviceError(resp.StatusCode, respBody)
+	}
+	var orgs []OrganizationSummary
+	if err := json.Unmarshal(respBody, &orgs); err != nil {
+		return nil, fmt.Errorf("decode organizations response: %w", err)
+	}
+	return orgs, nil
+}
+
+// LogoutSession revokes a CLI user session on the Console API (POST /api/auth/logout).
+func (c *DeviceClient) LogoutSession(ctx context.Context, accessToken string) error {
+	endpoint := c.ConsoleURL + "/api/auth/logout"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("build logout request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
+	req.Header.Set("Accept", "application/json")
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("logout session: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusUnauthorized {
+		return &DeviceAuthError{Code: "logout_failed", Message: fmt.Sprintf("server returned HTTP %d", resp.StatusCode), Status: resp.StatusCode}
+	}
+	return nil
 }
 
 // OpenBrowser opens targetURL in the user's default browser on a best-effort basis.

@@ -11,19 +11,25 @@ import (
 	"github.com/felinics/kibotos-sdk/cli/internal/auth"
 	"github.com/felinics/kibotos-sdk/cli/internal/config"
 	"github.com/felinics/kibotos-sdk/cli/internal/output"
+	"github.com/felinics/kibotos-sdk/cli/internal/prompt"
 )
 
 type loginResult struct {
-	Profile          string `json:"profile"`
-	AuthMethod       string `json:"auth_method"`
-	APIURL           string `json:"api_url"`
-	ConsoleURL       string `json:"console_url,omitempty"`
-	OrganizationID   string `json:"organization_id,omitempty"`
-	OrganizationName string `json:"organization_name,omitempty"`
-	UserEmail        string `json:"user_email,omitempty"`
-	KeyID            string `json:"key_id,omitempty"`
-	APIKeyMasked     string `json:"api_key_masked"`
-	Verified         bool   `json:"verified"`
+	Profile          string                     `json:"profile"`
+	AuthMethod       string                     `json:"auth_method"`
+	AuthType         string                     `json:"auth_type,omitempty"`
+	APIURL           string                     `json:"api_url"`
+	ConsoleURL       string                     `json:"console_url,omitempty"`
+	OrganizationID   string                     `json:"organization_id,omitempty"`
+	OrganizationName string                     `json:"organization_name,omitempty"`
+	Organizations    []auth.OrganizationSummary `json:"organizations,omitempty"`
+	UserID           string                     `json:"user_id,omitempty"`
+	UserEmail        string                     `json:"user_email,omitempty"`
+	SessionID        string                     `json:"session_id,omitempty"`
+	KeyID            string                     `json:"key_id,omitempty"`
+	TokenMasked      string                     `json:"token_masked,omitempty"`
+	APIKeyMasked     string                     `json:"api_key_masked,omitempty"`
+	Verified         bool                       `json:"verified"`
 }
 
 func (a *App) newLoginCmd() *cobra.Command {
@@ -37,7 +43,7 @@ func (a *App) newLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate kibo with your Kibotos account",
-		Long: "Authenticate the kibo CLI using the interactive browser Device Authorization Flow,\n" +
+		Long: "Authenticate the kibo CLI using the interactive browser Device Authorization Flow (user session),\n" +
 			"or non-interactively by passing --api-key kb_... for CI and headless environments.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -98,12 +104,15 @@ func (a *App) newLoginCmd() *cobra.Command {
 					return err
 				}
 
+				masked := config.MaskAPIKey(key)
 				result := loginResult{
 					Profile:      profileName,
 					AuthMethod:   "api_key",
+					AuthType:     "api_key",
 					APIURL:       normalizedAPIURL,
 					ConsoleURL:   res.ConsoleURL,
-					APIKeyMasked: config.MaskAPIKey(key),
+					TokenMasked:  masked,
+					APIKeyMasked: masked,
 					Verified:     verified,
 				}
 				if p.IsJSON() {
@@ -119,7 +128,13 @@ func (a *App) newLoginCmd() *cobra.Command {
 				})
 			}
 
-			// Default interactive Device Authorization Flow.
+			// Default interactive Device Authorization Flow (issues a user session token kbs_...).
+			if cmd.Flags().Changed("device-name") {
+				deviceName, err = validateResourceName(deviceName, true)
+				if err != nil {
+					return err
+				}
+			}
 			if strings.TrimSpace(deviceName) == "" {
 				if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
 					deviceName = strings.TrimSpace(host)
@@ -149,11 +164,13 @@ func (a *App) newLoginCmd() *cobra.Command {
 				}
 			}
 
-			p.Statusf("Waiting for authorization in browser...")
+			stopSpin := p.StartSpinner("Waiting for authorization in browser...")
 			tok, err := devClient.Poll(ctx, start)
 			if err != nil {
+				stopSpin("Browser authorization failed", false)
 				return err
 			}
+			stopSpin("Authorized in browser", true)
 
 			effectiveAPIURL := res.APIURL
 			if !cmd.Flags().Changed("api-url") && strings.TrimSpace(tok.APIURL) != "" {
@@ -164,34 +181,77 @@ func (a *App) newLoginCmd() *cobra.Command {
 				return usageError("%v", err)
 			}
 
+			cred, authType := tok.EffectiveCredential()
+			selectedOrgID := tok.OrganizationID
+			selectedOrgName := tok.OrganizationName
+
+			// If user belongs to multiple organizations and we are interactive, let them choose default org.
+			if authType == "user_session" && len(tok.Organizations) > 1 && a.isInteractive() {
+				opts := make([]prompt.Option, 0, len(tok.Organizations))
+				defaultIdx := 0
+				for i, o := range tok.Organizations {
+					if o.ID == selectedOrgID {
+						defaultIdx = i
+					}
+					opts = append(opts, prompt.Option{
+						Value:       o.ID,
+						Label:       fmt.Sprintf("%s (%s)", o.DisplayName, o.ID),
+						Description: fmt.Sprintf("%s · %s · %s", o.Region, o.Role, o.Status),
+					})
+				}
+				if pick, pickErr := a.prompter().Select("Select default organization:", "Organization", opts, defaultIdx); pickErr == nil {
+					selectedOrgID = pick.Value
+					for _, o := range tok.Organizations {
+						if o.ID == pick.Value {
+							selectedOrgName = o.DisplayName
+							break
+						}
+					}
+				}
+			}
+
 			if cfg.Profiles == nil {
 				cfg.Profiles = make(map[string]*config.Profile)
 			}
-			cfg.Profiles[profileName] = &config.Profile{
-				APIKey:           tok.APIKey,
+			prof := &config.Profile{
 				APIURL:           normalizedAPIURL,
 				ConsoleURL:       devClient.ConsoleURL,
-				OrganizationID:   tok.OrganizationID,
-				OrganizationName: tok.OrganizationName,
+				OrganizationID:   selectedOrgID,
+				OrganizationName: selectedOrgName,
+				UserID:           tok.UserID,
+				UserName:         tok.UserName,
 				UserEmail:        tok.UserEmail,
-				KeyID:            tok.KeyID,
 			}
+			if authType == "user_session" {
+				prof.AccessToken = cred
+				prof.SessionID = tok.SessionID
+			} else {
+				prof.APIKey = cred
+				prof.KeyID = tok.KeyID
+			}
+			cfg.Profiles[profileName] = prof
 			cfg.CurrentProfile = profileName
 
 			if err := a.store.Save(cfg); err != nil {
 				return err
 			}
 
+			masked := config.MaskAPIKey(cred)
 			result := loginResult{
 				Profile:          profileName,
 				AuthMethod:       "device_flow",
+				AuthType:         authType,
 				APIURL:           normalizedAPIURL,
 				ConsoleURL:       devClient.ConsoleURL,
-				OrganizationID:   tok.OrganizationID,
-				OrganizationName: tok.OrganizationName,
+				OrganizationID:   selectedOrgID,
+				OrganizationName: selectedOrgName,
+				Organizations:    tok.Organizations,
+				UserID:           tok.UserID,
 				UserEmail:        tok.UserEmail,
+				SessionID:        tok.SessionID,
 				KeyID:            tok.KeyID,
-				APIKeyMasked:     config.MaskAPIKey(tok.APIKey),
+				TokenMasked:      masked,
+				APIKeyMasked:     masked,
 				Verified:         true,
 			}
 			if p.IsJSON() {
@@ -200,13 +260,25 @@ func (a *App) newLoginCmd() *cobra.Command {
 			items := []output.KV{
 				{Key: "Status", Value: "Authenticated"},
 				{Key: "Profile", Value: result.Profile},
-				{Key: "Organization", Value: formatOrg(result.OrganizationName, result.OrganizationID)},
+				{Key: "Auth Type", Value: result.AuthType},
 				{Key: "User", Value: output.EmptyDash(result.UserEmail)},
+				{Key: "Organization", Value: formatOrg(result.OrganizationName, result.OrganizationID)},
 				{Key: "API URL", Value: result.APIURL},
-				{Key: "Key ID", Value: output.EmptyDash(result.KeyID)},
-				{Key: "API Key", Value: result.APIKeyMasked},
 			}
-			return p.Details(items)
+			if result.SessionID != "" {
+				items = append(items, output.KV{Key: "Session ID", Value: result.SessionID})
+				items = append(items, output.KV{Key: "Token", Value: result.TokenMasked})
+			} else {
+				items = append(items, output.KV{Key: "Key ID", Value: output.EmptyDash(result.KeyID)})
+				items = append(items, output.KV{Key: "API Key", Value: result.APIKeyMasked})
+			}
+			if err := p.Details(items); err != nil {
+				return err
+			}
+			if len(tok.Organizations) > 1 {
+				p.Hintf("Switch organizations anytime with: kibo org use")
+			}
+			return nil
 		},
 	}
 
@@ -220,14 +292,15 @@ func (a *App) newLoginCmd() *cobra.Command {
 }
 
 type logoutResult struct {
-	Profile string `json:"profile"`
-	Removed bool   `json:"removed"`
+	Profile       string `json:"profile"`
+	Removed       bool   `json:"removed"`
+	SessionRevoke bool   `json:"session_revoked,omitempty"`
 }
 
 func (a *App) newLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
-		Short: "Remove saved credentials for a profile",
+		Short: "Sign out and remove saved credentials for a profile",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := a.printer()
@@ -237,8 +310,16 @@ func (a *App) newLogoutCmd() *cobra.Command {
 			}
 
 			profileName := res.ProfileName
-			_, existed := cfg.Profiles[profileName]
+			prof, existed := cfg.Profiles[profileName]
+			sessionRevoked := false
 			if existed {
+				if prof != nil && strings.TrimSpace(prof.AccessToken) != "" {
+					if devClient, cErr := auth.NewDeviceClient(res.ConsoleURL, a.httpClient, a.userAgent()); cErr == nil {
+						if lErr := devClient.LogoutSession(cmd.Context(), prof.AccessToken); lErr == nil {
+							sessionRevoked = true
+						}
+					}
+				}
 				delete(cfg.Profiles, profileName)
 				if cfg.CurrentProfile == profileName {
 					names := cfg.SortedProfileNames()
@@ -254,8 +335,9 @@ func (a *App) newLogoutCmd() *cobra.Command {
 			}
 
 			result := logoutResult{
-				Profile: profileName,
-				Removed: existed,
+				Profile:       profileName,
+				Removed:       existed,
+				SessionRevoke: sessionRevoked,
 			}
 			if p.IsJSON() {
 				return p.JSON(result)
@@ -273,14 +355,18 @@ func (a *App) newLogoutCmd() *cobra.Command {
 type whoamiResult struct {
 	Authenticated    bool           `json:"authenticated"`
 	Profile          string         `json:"profile"`
+	AuthType         string         `json:"auth_type,omitempty"`
 	AuthSource       string         `json:"auth_source"`
 	APIURL           string         `json:"api_url"`
 	ConsoleURL       string         `json:"console_url,omitempty"`
 	OrganizationID   string         `json:"organization_id,omitempty"`
 	OrganizationName string         `json:"organization_name,omitempty"`
+	UserID           string         `json:"user_id,omitempty"`
 	UserEmail        string         `json:"user_email,omitempty"`
+	SessionID        string         `json:"session_id,omitempty"`
 	KeyID            string         `json:"key_id,omitempty"`
-	APIKeyMasked     string         `json:"api_key_masked"`
+	TokenMasked      string         `json:"token_masked,omitempty"`
+	APIKeyMasked     string         `json:"api_key_masked,omitempty"`
 	Offline          bool           `json:"offline"`
 	Zones            []kibotos.Zone `json:"zones,omitempty"`
 }
@@ -300,9 +386,10 @@ func (a *App) newWhoamiCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(res.APIKey) == "" {
+			cred := res.Credential()
+			if cred == "" {
 				return unauthenticatedError(
-					"not authenticated: no Kibotos API key configured",
+					"not authenticated: no Kibotos session or API key configured",
 					"Run `kibo login` to sign in interactively, or set KIBOTOS_API_KEY.",
 				)
 			}
@@ -312,17 +399,22 @@ func (a *App) newWhoamiCmd() *cobra.Command {
 				return usageError("%v", err)
 			}
 
+			masked := config.MaskAPIKey(cred)
 			result := whoamiResult{
 				Authenticated:    true,
 				Profile:          res.ProfileName,
+				AuthType:         res.AuthType,
 				AuthSource:       res.AuthSource,
 				APIURL:           normalizedAPIURL,
 				ConsoleURL:       res.ConsoleURL,
 				OrganizationID:   res.OrganizationID,
 				OrganizationName: res.OrganizationName,
+				UserID:           res.UserID,
 				UserEmail:        res.UserEmail,
+				SessionID:        res.SessionID,
 				KeyID:            res.KeyID,
-				APIKeyMasked:     config.MaskAPIKey(res.APIKey),
+				TokenMasked:      masked,
+				APIKeyMasked:     masked,
 				Offline:          offline,
 			}
 
@@ -347,13 +439,19 @@ func (a *App) newWhoamiCmd() *cobra.Command {
 
 			items := []output.KV{
 				{Key: "Profile", Value: result.Profile},
+				{Key: "Auth Type", Value: output.EmptyDash(result.AuthType)},
 				{Key: "Auth Source", Value: result.AuthSource},
 				{Key: "Organization", Value: formatOrg(result.OrganizationName, result.OrganizationID)},
 				{Key: "User", Value: output.EmptyDash(result.UserEmail)},
-				{Key: "Key ID", Value: output.EmptyDash(result.KeyID)},
-				{Key: "API Key", Value: result.APIKeyMasked},
-				{Key: "API URL", Value: result.APIURL},
 			}
+			if result.SessionID != "" {
+				items = append(items, output.KV{Key: "Session ID", Value: result.SessionID})
+				items = append(items, output.KV{Key: "Token", Value: result.TokenMasked})
+			} else {
+				items = append(items, output.KV{Key: "Key ID", Value: output.EmptyDash(result.KeyID)})
+				items = append(items, output.KV{Key: "API Key", Value: result.APIKeyMasked})
+			}
+			items = append(items, output.KV{Key: "API URL", Value: result.APIURL})
 			if offline {
 				items = append(items, output.KV{Key: "Live Check", Value: "skipped (--offline)"})
 			} else {
@@ -380,11 +478,14 @@ func (a *App) newWhoamiCmd() *cobra.Command {
 type profileEntry struct {
 	Name             string `json:"name"`
 	Active           bool   `json:"active"`
+	AuthType         string `json:"auth_type,omitempty"`
 	OrganizationID   string `json:"organization_id,omitempty"`
 	OrganizationName string `json:"organization_name,omitempty"`
 	UserEmail        string `json:"user_email,omitempty"`
 	APIURL           string `json:"api_url,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
 	KeyID            string `json:"key_id,omitempty"`
+	TokenMasked      string `json:"token_masked,omitempty"`
 	APIKeyMasked     string `json:"api_key_masked,omitempty"`
 }
 
@@ -415,15 +516,25 @@ func (a *App) newProfileCmd() *cobra.Command {
 			entries := make([]profileEntry, 0, len(names))
 			for _, name := range names {
 				prof := cfg.Profiles[name]
+				cred := prof.APIKey
+				authType := "api_key"
+				if strings.TrimSpace(prof.AccessToken) != "" {
+					cred = prof.AccessToken
+					authType = "user_session"
+				}
+				masked := config.MaskAPIKey(cred)
 				entries = append(entries, profileEntry{
 					Name:             name,
 					Active:           name == active,
+					AuthType:         authType,
 					OrganizationID:   prof.OrganizationID,
 					OrganizationName: prof.OrganizationName,
 					UserEmail:        prof.UserEmail,
 					APIURL:           prof.APIURL,
+					SessionID:        prof.SessionID,
 					KeyID:            prof.KeyID,
-					APIKeyMasked:     config.MaskAPIKey(prof.APIKey),
+					TokenMasked:      masked,
+					APIKeyMasked:     masked,
 				})
 			}
 
@@ -432,6 +543,9 @@ func (a *App) newProfileCmd() *cobra.Command {
 					CurrentProfile: cfg.CurrentProfile,
 					Profiles:       entries,
 				})
+			}
+			if p.IsQuiet() {
+				return p.IDs(names)
 			}
 			if len(entries) == 0 {
 				_, _ = fmt.Fprintln(p.Out, "No profiles configured. Run `kibo login` to sign in.")
@@ -446,29 +560,37 @@ func (a *App) newProfileCmd() *cobra.Command {
 				rows = append(rows, []string{
 					marker,
 					e.Name,
+					e.AuthType,
 					formatOrg(e.OrganizationName, e.OrganizationID),
 					output.EmptyDash(e.UserEmail),
 					output.EmptyDash(e.APIURL),
-					output.EmptyDash(e.APIKeyMasked),
+					output.EmptyDash(e.TokenMasked),
 				})
 			}
-			return p.Table([]string{"ACTIVE", "NAME", "ORGANIZATION", "USER", "API URL", "API KEY"}, rows)
+			return p.Table([]string{"ACTIVE", "NAME", "AUTH", "ORGANIZATION", "USER", "API URL", "CREDENTIAL"}, rows)
 		},
 	}
 
 	useCmd := &cobra.Command{
-		Use:   "use <name>",
+		Use:   "use [name]",
 		Short: "Switch the active profile",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := a.printer()
-			name := strings.TrimSpace(args[0])
-			if err := config.ValidateProfileName(name); err != nil {
-				return usageError("%v", err)
-			}
 			cfg, err := a.store.Load()
 			if err != nil {
 				return err
+			}
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			name, err := a.resolveProfileName(cfg, ref, "Select active profile:")
+			if err != nil {
+				return err
+			}
+			if err := config.ValidateProfileName(name); err != nil {
+				return usageError("%v", err)
 			}
 			if _, ok := cfg.Profiles[name]; !ok {
 				return &CLIError{
@@ -487,24 +609,34 @@ func (a *App) newProfileCmd() *cobra.Command {
 					"current_profile": name,
 				})
 			}
+			if p.IsQuiet() {
+				return p.ID(name)
+			}
 			_, _ = fmt.Fprintf(p.Out, "Active profile set to %q.\n", name)
 			return nil
 		},
 	}
 
 	deleteCmd := &cobra.Command{
-		Use:   "delete <name>",
+		Use:   "delete [name]",
 		Short: "Delete a saved profile",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := a.printer()
-			name := strings.TrimSpace(args[0])
-			if err := config.ValidateProfileName(name); err != nil {
-				return usageError("%v", err)
-			}
 			cfg, err := a.store.Load()
 			if err != nil {
 				return err
+			}
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			name, err := a.resolveProfileName(cfg, ref, "Select a profile to delete:")
+			if err != nil {
+				return err
+			}
+			if err := config.ValidateProfileName(name); err != nil {
+				return usageError("%v", err)
 			}
 			if _, ok := cfg.Profiles[name]; !ok {
 				return &CLIError{
@@ -512,6 +644,13 @@ func (a *App) newProfileCmd() *cobra.Command {
 					Code:     "profile_not_found",
 					Message:  fmt.Sprintf("profile %q does not exist", name),
 				}
+			}
+			ok, err := a.confirmDestructive(fmt.Sprintf("Delete profile %q?", name))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return prompt.ErrCancelled
 			}
 			delete(cfg.Profiles, name)
 			if cfg.CurrentProfile == name {
@@ -530,6 +669,9 @@ func (a *App) newProfileCmd() *cobra.Command {
 					"deleted":         name,
 					"current_profile": cfg.CurrentProfile,
 				})
+			}
+			if p.IsQuiet() {
+				return p.ID(name)
 			}
 			_, _ = fmt.Fprintf(p.Out, "Deleted profile %q.\n", name)
 			return nil

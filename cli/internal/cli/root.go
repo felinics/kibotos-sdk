@@ -10,12 +10,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	kibotos "github.com/felinics/kibotos-sdk/sdks/go"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/felinics/kibotos-sdk/cli/internal/auth"
 	"github.com/felinics/kibotos-sdk/cli/internal/config"
 	"github.com/felinics/kibotos-sdk/cli/internal/output"
+	"github.com/felinics/kibotos-sdk/cli/internal/prompt"
 )
 
 const (
@@ -41,6 +44,8 @@ type Options struct {
 	HTTPClient           *http.Client
 	OpenBrowser          func(string) error
 	PollIntervalOverride time.Duration
+	InteractiveOverride  *bool
+	ColorOverride        *bool
 	Build                BuildInfo
 }
 
@@ -54,12 +59,20 @@ type App struct {
 	httpClient           *http.Client
 	openBrowser          func(string) error
 	pollIntervalOverride time.Duration
+	interactiveOverride  *bool
+	colorOverride        *bool
 	build                BuildInfo
+	prompterInst         *prompt.Prompter
 
 	// Global persistent flags
 	flagJSON    bool
 	flagOutput  string
+	flagQuiet   bool
+	flagNoInput bool
+	flagYes     bool
+	flagNoColor bool
 	flagProfile string
+	flagOrg     string
 	flagAPIKey  string
 	flagAPIURL  string
 }
@@ -75,7 +88,7 @@ func NewRootCommand(opts Options) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return app.validateOutputFlags()
+			return app.validateOutputFlags(cmd)
 		},
 	}
 
@@ -88,8 +101,13 @@ func NewRootCommand(opts Options) *cobra.Command {
 
 	pf := root.PersistentFlags()
 	pf.BoolVar(&app.flagJSON, "json", false, "Output valid JSON to stdout (shorthand for -o json)")
-	pf.StringVarP(&app.flagOutput, "output", "o", "table", "Output format: table or json")
+	pf.StringVarP(&app.flagOutput, "output", "o", "", "Output format: table or json (env: KIBO_OUTPUT)")
+	pf.BoolVarP(&app.flagQuiet, "quiet", "q", false, "Only output resource IDs to stdout and suppress progress messages")
+	pf.BoolVar(&app.flagNoInput, "no-input", false, "Disable interactive prompts and fail fast on missing inputs (env: KIBO_NO_INPUT)")
+	pf.BoolVarP(&app.flagYes, "yes", "y", false, "Skip interactive confirmation prompts")
+	pf.BoolVar(&app.flagNoColor, "no-color", false, "Disable colored output (env: NO_COLOR)")
 	pf.StringVar(&app.flagProfile, "profile", "", "Profile name to use")
+	pf.StringVar(&app.flagOrg, "org", "", "Override organization ID for this command (env: KIBO_ORG)")
 	pf.StringVar(&app.flagAPIKey, "api-key", "", "Override Kibotos API key for this command")
 	pf.StringVar(&app.flagAPIURL, "api-url", "", "Override Kibotos API base URL")
 
@@ -97,6 +115,7 @@ func NewRootCommand(opts Options) *cobra.Command {
 		app.newLoginCmd(),
 		app.newLogoutCmd(),
 		app.newWhoamiCmd(),
+		app.newOrgCmd(),
 		app.newProfileCmd(),
 		app.newZoneCmd(),
 		app.newTemplateCmd(),
@@ -123,27 +142,67 @@ func Execute(ctx context.Context, args []string, opts Options) int {
 	if opts.Stdin == nil {
 		opts.Stdin = os.Stdin
 	}
+	envLookup := opts.EnvLookup
+	if envLookup == nil {
+		envLookup = os.Getenv
+	}
 
 	root := NewRootCommand(opts)
 	root.SetArgs(args)
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		code, detail := classifyError(err)
-		if argsWantJSON(args) {
+		if argsWantJSON(args, envLookup) {
 			p := &output.Printer{Out: opts.Stdout, Err: opts.Stderr, Format: output.FormatJSON}
 			p.ErrorJSON(jsonErrorEnvelope{Error: detail})
 		} else {
-			_, _ = fmt.Fprintf(opts.Stderr, "Error: %s\n", detail.Message)
+			colorErr := stderrColorForExecute(args, opts, envLookup)
+			errLabel := styleText(colorErr, color.FgRed, color.Bold, "Error:")
+			_, _ = fmt.Fprintf(opts.Stderr, "%s %s\n", errLabel, detail.Message)
+			if formattedDetails := formatErrorDetails(detail.Details); formattedDetails != "" {
+				detLabel := styleText(colorErr, color.Faint, color.FgWhite, "Details:")
+				_, _ = fmt.Fprintf(opts.Stderr, "%s %s\n", detLabel, formattedDetails)
+			}
 			if detail.RequestID != "" {
-				_, _ = fmt.Fprintf(opts.Stderr, "Request ID: %s\n", detail.RequestID)
+				reqLabel := styleText(colorErr, color.Faint, color.FgWhite, "Request ID:")
+				_, _ = fmt.Fprintf(opts.Stderr, "%s %s\n", reqLabel, detail.RequestID)
 			}
 			if detail.Hint != "" {
-				_, _ = fmt.Fprintf(opts.Stderr, "Hint: %s\n", detail.Hint)
+				hintLabel := styleText(colorErr, color.FgCyan, color.Bold, "Hint:")
+				_, _ = fmt.Fprintf(opts.Stderr, "%s %s\n", hintLabel, detail.Hint)
 			}
 		}
 		return code
 	}
 	return ExitOK
+}
+
+func styleText(enabled bool, attr1, attr2 color.Attribute, text string) string {
+	c := color.New(attr1, attr2)
+	if enabled {
+		c.EnableColor()
+	} else {
+		c.DisableColor()
+	}
+	return c.Sprint(text)
+}
+
+func stderrColorForExecute(args []string, opts Options, envLookup func(string) string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--no-color" || arg == "--no-color=true" {
+			return false
+		}
+	}
+	if envLookup("NO_COLOR") != "" || strings.EqualFold(envLookup("TERM"), "dumb") {
+		return false
+	}
+	if opts.ColorOverride != nil {
+		return *opts.ColorOverride
+	}
+	return isTerminalWriter(opts.Stderr)
 }
 
 func newApp(opts Options) *App {
@@ -184,34 +243,96 @@ func newApp(opts Options) *App {
 		httpClient:           opts.HTTPClient,
 		openBrowser:          openBrowser,
 		pollIntervalOverride: opts.PollIntervalOverride,
+		interactiveOverride:  opts.InteractiveOverride,
+		colorOverride:        opts.ColorOverride,
 		build:                build,
 	}
 }
 
-func (a *App) validateOutputFlags() error {
+func (a *App) effectiveOutputRaw() string {
+	if strings.TrimSpace(a.flagOutput) != "" {
+		return strings.TrimSpace(a.flagOutput)
+	}
+	if v := strings.TrimSpace(a.envLookup("KIBO_OUTPUT")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(a.envLookup("KIBOTOS_OUTPUT")); v != "" {
+		return v
+	}
+	return "table"
+}
+
+func (a *App) validateOutputFlags(cmd *cobra.Command) error {
 	if a.flagJSON {
 		return nil
 	}
-	switch strings.ToLower(strings.TrimSpace(a.flagOutput)) {
+	raw := a.effectiveOutputRaw()
+	switch strings.ToLower(raw) {
 	case "", "table", "json":
 		return nil
 	default:
-		return usageError("invalid output format %q: must be table or json", a.flagOutput)
+		return usageError("invalid output format %q: must be table or json", raw)
 	}
 }
 
 func (a *App) outputFormat() output.Format {
-	if a.flagJSON || strings.EqualFold(strings.TrimSpace(a.flagOutput), "json") {
+	if a.flagJSON || strings.EqualFold(a.effectiveOutputRaw(), "json") {
 		return output.FormatJSON
 	}
 	return output.FormatTable
 }
 
+func (a *App) isInteractive() bool {
+	if a.flagNoInput || a.flagQuiet || a.outputFormat() == output.FormatJSON {
+		return false
+	}
+	if isEnvTruthy(a.envLookup("KIBO_NO_INPUT")) ||
+		isEnvTruthy(a.envLookup("KIBOTOS_NO_INPUT")) ||
+		isEnvTruthy(a.envLookup("CI")) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(a.envLookup("TERM")), "dumb") {
+		return false
+	}
+	if a.interactiveOverride != nil {
+		return *a.interactiveOverride
+	}
+	return isTerminalReader(a.stdin) && isTerminalWriter(a.stderr)
+}
+
+func (a *App) colorEnabledFor(w io.Writer) bool {
+	if a.flagNoColor || a.flagQuiet || a.outputFormat() == output.FormatJSON {
+		return false
+	}
+	if a.envLookup("NO_COLOR") != "" || strings.EqualFold(strings.TrimSpace(a.envLookup("TERM")), "dumb") {
+		return false
+	}
+	if a.colorOverride != nil {
+		return *a.colorOverride
+	}
+	return isTerminalWriter(w)
+}
+
+func (a *App) prompter() *prompt.Prompter {
+	if a.prompterInst == nil {
+		a.prompterInst = prompt.New(a.stdin, a.stderr, a.colorEnabledFor(a.stderr))
+	}
+	return a.prompterInst
+}
+
 func (a *App) printer() *output.Printer {
+	ttyErr := isTerminalWriter(a.stderr)
+	if a.interactiveOverride != nil {
+		ttyErr = *a.interactiveOverride
+	}
 	return &output.Printer{
-		Out:    a.stdout,
-		Err:    a.stderr,
-		Format: a.outputFormat(),
+		Out:      a.stdout,
+		Err:      a.stderr,
+		Format:   a.outputFormat(),
+		Quiet:    a.flagQuiet,
+		ColorOut: a.colorEnabledFor(a.stdout),
+		ColorErr: a.colorEnabledFor(a.stderr),
+		TTYErr:   ttyErr,
 	}
 }
 
@@ -229,14 +350,29 @@ func (a *App) loadAndResolve(consoleURLOverride string) (*config.Config, config.
 		APIKey:     a.flagAPIKey,
 		APIURL:     a.flagAPIURL,
 		ConsoleURL: consoleURLOverride,
+		Org:        a.flagOrg,
 	})
 	return cfg, res, nil
 }
 
+type orgHeaderTransport struct {
+	base  http.RoundTripper
+	orgID string
+}
+
+func (t *orgHeaderTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	if t.orgID != "" && clone.Header.Get("X-Kibotos-Organization") == "" {
+		clone.Header.Set("X-Kibotos-Organization", t.orgID)
+	}
+	return t.base.RoundTrip(clone)
+}
+
 func (a *App) newClientFromResolved(res config.Resolved) (*kibotos.Client, error) {
-	if strings.TrimSpace(res.APIKey) == "" {
+	cred := res.Credential()
+	if cred == "" {
 		return nil, unauthenticatedError(
-			"not authenticated: no Kibotos API key configured",
+			"not authenticated: no Kibotos session or API key configured",
 			"Run `kibo login` to sign in interactively, or set KIBOTOS_API_KEY.",
 		)
 	}
@@ -244,10 +380,24 @@ func (a *App) newClientFromResolved(res config.Resolved) (*kibotos.Client, error
 		kibotos.WithBaseURL(res.APIURL),
 		kibotos.WithUserAgent(a.userAgent()),
 	}
-	if a.httpClient != nil {
-		opts = append(opts, kibotos.WithHTTPClient(a.httpClient))
+	hc := a.httpClient
+	if res.AuthType == "user_session" && strings.TrimSpace(res.OrganizationID) != "" {
+		baseClient := hc
+		if baseClient == nil {
+			baseClient = &http.Client{Timeout: 60 * time.Second}
+		}
+		baseRT := baseClient.Transport
+		if baseRT == nil {
+			baseRT = http.DefaultTransport
+		}
+		wrapped := *baseClient
+		wrapped.Transport = &orgHeaderTransport{base: baseRT, orgID: strings.TrimSpace(res.OrganizationID)}
+		hc = &wrapped
 	}
-	client, err := kibotos.NewClient(res.APIKey, opts...)
+	if hc != nil {
+		opts = append(opts, kibotos.WithHTTPClient(hc))
+	}
+	client, err := kibotos.NewClient(cred, opts...)
 	if err != nil {
 		return nil, usageError("%v", err)
 	}
@@ -273,7 +423,8 @@ func (a *App) pollDelay() time.Duration {
 	return defaultPollIntervalForPolling
 }
 
-func argsWantJSON(args []string) bool {
+func argsWantJSON(args []string, envLookup func(string) string) bool {
+	explicitOutput := ""
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -282,14 +433,54 @@ func argsWantJSON(args []string) bool {
 		if arg == "--json" || arg == "--json=true" {
 			return true
 		}
-		if arg == "-o=json" || arg == "--output=json" {
-			return true
+		if strings.HasPrefix(arg, "-o=") {
+			explicitOutput = strings.TrimPrefix(arg, "-o=")
+		} else if strings.HasPrefix(arg, "--output=") {
+			explicitOutput = strings.TrimPrefix(arg, "--output=")
+		} else if (arg == "-o" || arg == "--output") && i+1 < len(args) {
+			explicitOutput = args[i+1]
+			i++
 		}
-		if (arg == "-o" || arg == "--output") && i+1 < len(args) && strings.EqualFold(args[i+1], "json") {
-			return true
+	}
+	if explicitOutput != "" {
+		return strings.EqualFold(strings.TrimSpace(explicitOutput), "json")
+	}
+	if envLookup != nil {
+		if v := strings.TrimSpace(envLookup("KIBO_OUTPUT")); v != "" {
+			return strings.EqualFold(v, "json")
+		}
+		if v := strings.TrimSpace(envLookup("KIBOTOS_OUTPUT")); v != "" {
+			return strings.EqualFold(v, "json")
 		}
 	}
 	return false
+}
+
+func isEnvTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalReader(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	fd := f.Fd()
+	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
+}
+
+func isTerminalWriter(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fd := f.Fd()
+	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
 }
 
 func parseLabels(entries []string) (map[string]string, error) {
@@ -304,10 +495,16 @@ func parseLabels(entries []string) (map[string]string, error) {
 		}
 		k := strings.TrimSpace(entry[:idx])
 		v := entry[idx+1:]
-		if k == "" {
-			return nil, usageError("invalid --label %q: label key cannot be empty", entry)
+		if err := validateLabelKey(k); err != nil {
+			return nil, err
+		}
+		if err := validateLabelValue(k, v); err != nil {
+			return nil, err
 		}
 		out[k] = v
+	}
+	if len(out) > maxUserLabels {
+		return nil, usageError("too many labels (%d): at most %d labels are allowed", len(out), maxUserLabels)
 	}
 	return out, nil
 }
@@ -324,21 +521,27 @@ func parseUpdateLabels(setEntries, unsetKeys []string) (map[string]*string, erro
 		}
 		k := strings.TrimSpace(entry[:idx])
 		v := entry[idx+1:]
-		if k == "" {
-			return nil, usageError("invalid --label %q: label key cannot be empty", entry)
+		if err := validateLabelKey(k); err != nil {
+			return nil, err
+		}
+		if err := validateLabelValue(k, v); err != nil {
+			return nil, err
 		}
 		valCopy := v
 		out[k] = &valCopy
 	}
 	for _, key := range unsetKeys {
 		k := strings.TrimSpace(key)
-		if k == "" {
-			return nil, usageError("invalid --unset-label: key cannot be empty")
+		if err := validateLabelKey(k); err != nil {
+			return nil, err
 		}
 		if _, exists := out[k]; exists {
 			return nil, usageError("label %q cannot be both set and unset in the same update", k)
 		}
 		out[k] = nil
+	}
+	if len(out) > maxUserLabels {
+		return nil, usageError("too many label changes (%d): at most %d labels are allowed", len(out), maxUserLabels)
 	}
 	return out, nil
 }

@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	kibotos "github.com/felinics/kibotos-sdk/sdks/go"
 
 	"github.com/felinics/kibotos-sdk/cli/internal/auth"
+	"github.com/felinics/kibotos-sdk/cli/internal/prompt"
 )
 
 const (
@@ -27,6 +30,7 @@ type CLIError struct {
 	Code     string
 	Message  string
 	Hint     string
+	Details  map[string]any
 	Err      error
 }
 
@@ -49,6 +53,27 @@ func usageError(format string, args ...any) *CLIError {
 		ExitCode: ExitUsage,
 		Code:     "invalid_usage",
 		Message:  fmt.Sprintf(format, args...),
+	}
+}
+
+func usageErrorWithHint(hint, format string, args ...any) *CLIError {
+	return &CLIError{
+		ExitCode: ExitUsage,
+		Code:     "invalid_usage",
+		Message:  fmt.Sprintf(format, args...),
+		Hint:     hint,
+	}
+}
+
+func missingFlagError(flag, hint string) *CLIError {
+	return &CLIError{
+		ExitCode: ExitUsage,
+		Code:     "invalid_usage",
+		Message:  fmt.Sprintf("%s is required", flag),
+		Hint:     hint,
+		Details: map[string]any{
+			"missing_flags": []string{flag},
+		},
 	}
 }
 
@@ -98,6 +123,14 @@ func classifyError(err error) (int, jsonErrorDetail) {
 		return ExitOK, jsonErrorDetail{}
 	}
 
+	if errors.Is(err, prompt.ErrCancelled) {
+		return ExitError, jsonErrorDetail{
+			Code:     "cancelled",
+			Message:  "operation cancelled",
+			ExitCode: ExitError,
+		}
+	}
+
 	var cliErr *CLIError
 	if errors.As(err, &cliErr) {
 		code := cliErr.Code
@@ -109,6 +142,7 @@ func classifyError(err error) (int, jsonErrorDetail) {
 			Message:  cliErr.Error(),
 			ExitCode: cliErr.ExitCode,
 			Hint:     cliErr.Hint,
+			Details:  cliErr.Details,
 		}
 	}
 
@@ -189,4 +223,42 @@ func isCobraUsageError(err error) bool {
 		}
 	}
 	return false
+}
+
+func formatErrorDetails(details map[string]any) string {
+	if len(details) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(details))
+	for k := range details {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		v := details[k]
+		if v == nil {
+			continue
+		}
+		switch tv := v.(type) {
+		case string:
+			if strings.TrimSpace(tv) == "" {
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("%s=%s", k, tv))
+		case []string:
+			if len(tv) == 0 {
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("%s=%s", k, strings.Join(tv, ",")))
+		default:
+			raw, err := json.Marshal(tv)
+			if err != nil {
+				parts = append(parts, fmt.Sprintf("%s=%v", k, tv))
+			} else {
+				parts = append(parts, fmt.Sprintf("%s=%s", k, string(raw)))
+			}
+		}
+	}
+	return strings.Join(parts, "; ")
 }

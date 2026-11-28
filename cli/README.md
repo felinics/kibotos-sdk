@@ -25,7 +25,7 @@ go run ./cmd/kibo --help
 kibo login
 ```
 
-`kibo` displays a one-time verification code and opens the Kibotos Console in your browser to approve the device and issue a scoped API key. Use `--no-browser` in remote or SSH sessions.
+`kibo` displays a one-time verification code and opens the Kibotos Console in your browser to sign in on this device. This issues a **user-level CLI session token (`kbs_...`)** managed in **Account → Sessions** (no organization API key is minted), and lets you switch organizations anytime with `kibo org list` / `kibo org use` or `--org <id>`. Use `--no-browser` in remote or SSH sessions.
 
 ### Non-Interactive / CI Login
 
@@ -61,48 +61,41 @@ Resolution precedence (highest to lowest):
 # Check active identity and accessible zones
 kibo whoami
 
-# Discover zones and templates
-kibo zone list
-kibo template list
+# Create a workspace interactively (walks you through template & optional settings)
+kibo ws create
 
-# Create a workspace and wait until it is available
-kibo workspace create --template python-3.12 --name devbox --timeout 3600 --wait
+# Or create directly with human-friendly flags (waits until available by default!)
+kibo ws create -t python-3.12 -n devbox --memory 4Gi --timeout 1h
 
-# Expose port 8080 over a temporary HTTPS URL
-kibo exposure create wks_... --port 8080 --ttl 3600
+# Expose port 8080 over a temporary HTTPS URL (supports workspace names as well as IDs)
+kibo exp create devbox 8080 --ttl 1h
 
 # Create a 50 GiB persistent volume and attach it to a stopped workspace
-kibo volume create --size 50 --name datasets --wait
-kibo workspace stop wks_... --wait
-kibo workspace volume attach wks_... --volume vol_... --mount-path /data
-kibo workspace start wks_... --wait
+kibo vol create -s 50Gi -n datasets
+kibo ws stop devbox
+kibo ws volume attach devbox --volume datasets --mount-path /data
+kibo ws start devbox
 
-# Clean up
-kibo workspace delete wks_... --wait
+# Clean up (prompts for confirmation in interactive TTY; pass -y to skip)
+kibo ws delete devbox
 ```
 
-## Command Overview
+## Ergonomics: Interactive vs. Scripting / AI Agents
 
-| Command | Aliases | Description |
-| --- | --- | --- |
-| `kibo login` | — | Sign in via browser Device Flow or `--api-key` |
-| `kibo logout` | — | Remove saved credentials for a profile |
-| `kibo whoami` | — | Show active profile, auth source, and live zone check |
-| `kibo profile` | `profiles` | `list`, `use <name>`, `delete <name>` |
-| `kibo zone` | `zones` | `list` |
-| `kibo template` | `tpl`, `templates` | `list`, `get <id>`, `revisions <id>`, `revision <id> <revision_id>` |
-| `kibo workspace` | `ws`, `workspaces` | `list`, `get`, `create`, `update`, `delete`, `start`, `stop`, `timeout`, `network`, `volume attach\|detach`, `wait` |
-| `kibo volume` | `vol`, `volumes` | `list`, `get`, `create`, `update`, `resize`, `delete`, `wait` |
-| `kibo exposure` | `exp`, `exposures` | `list`, `get`, `create`, `revoke` |
-| `kibo version` | — | Show CLI and SDK version info |
-
-## Scripting & AI Agents
-
-- Pass `--json` (or `-o json`) to write strictly valid JSON to `stdout`. Prompts, progress updates, warnings, and structured error JSON are always written to `stderr`.
-- Exit codes:
-  - `0`: Success
-  - `1`: API or runtime error
-  - `2`: Usage or flag validation error
-  - `3`: Unauthenticated (no credentials or HTTP `401`)
+- **Interactive terminal (TTY)**:
+  - Omitting required flags or resource IDs opens minimal inline arrow-key pickers (`↑`/`↓` + `Enter`, e.g., `kibo ws create`, `kibo ws stop`, `kibo exp create`) — no heavy full-screen TUI.
+  - Async mutations (`workspace create/start/stop/delete/network`, `volume create/resize/delete`) **wait by default** with a live stderr spinner; pass `--no-wait` to return immediately.
+  - Destructive commands (`delete`, `revoke`, `stop --force`) ask `[y/N]` confirmation in interactive terminals (skip with `-y` / `--yes`).
+  - Supports human-friendly units (`--memory 4Gi`, `--disk 20Gi`, `--size 50Gi`, `--timeout 1h30m`, `--template python-3.12@r42`) and unique workspace/volume names in place of IDs.
+  - Colored status output via ANSI (automatically disabled on non-TTY or when `NO_COLOR` / `--no-color` is set).
+- **Scripting & AI Agents (Non-Interactive)**:
+  - Automatically enters non-interactive mode when stdin/stderr is not a TTY, or when `--json`, `-q`/`--quiet`, `--no-input`, `CI=true`, or `KIBO_NO_INPUT=1` is set — **never blocks on stdin**.
+  - Pass `--json` (or `-o json`, or set `KIBO_OUTPUT=json`) for strictly valid JSON on `stdout` and structured JSON errors (with actionable `hint` / `details.missing_flags`) on `stderr`.
+  - Pass `-q` / `--quiet` to print only resource IDs to `stdout` (ideal for `WS=$(kibo ws create -t python-3.12 -q)`).
+  - Exit codes:
+    - `0`: Success
+    - `1`: API, runtime, or cancelled error
+    - `2`: Usage, missing flag, ambiguous name, or validation error
+    - `3`: Unauthenticated (no credentials or HTTP `401`)
 
 For AI coding agents driving `kibo`, see the paired [`use-kibo`](../skills/use-kibo/SKILL.md) skill.

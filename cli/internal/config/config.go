@@ -23,11 +23,15 @@ const (
 
 // Profile holds credentials and metadata for a single named CLI profile.
 type Profile struct {
+	AccessToken      string `json:"access_token,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
 	APIKey           string `json:"api_key,omitempty"`
 	APIURL           string `json:"api_url,omitempty"`
 	ConsoleURL       string `json:"console_url,omitempty"`
 	OrganizationID   string `json:"organization_id,omitempty"`
 	OrganizationName string `json:"organization_name,omitempty"`
+	UserID           string `json:"user_id,omitempty"`
+	UserName         string `json:"user_name,omitempty"`
 	UserEmail        string `json:"user_email,omitempty"`
 	KeyID            string `json:"key_id,omitempty"`
 }
@@ -166,6 +170,7 @@ type Overrides struct {
 	APIKey     string
 	APIURL     string
 	ConsoleURL string
+	Org        string
 }
 
 // Resolved contains the effective configuration for a CLI invocation after applying
@@ -173,14 +178,27 @@ type Overrides struct {
 type Resolved struct {
 	ProfileName      string
 	ProfileExists    bool
-	APIKey           string
+	AuthType         string // "user_session", "api_key", or "none"
+	AccessToken      string // kbs_... user session token when AuthType == "user_session"
+	SessionID        string
+	APIKey           string // kb_... organization API key when AuthType == "api_key"
 	AuthSource       string
 	APIURL           string
 	ConsoleURL       string
 	OrganizationID   string
 	OrganizationName string
+	UserID           string
+	UserName         string
 	UserEmail        string
 	KeyID            string
+}
+
+// Credential returns whichever bearer credential is active (AccessToken or APIKey).
+func (r Resolved) Credential() string {
+	if strings.TrimSpace(r.AccessToken) != "" {
+		return strings.TrimSpace(r.AccessToken)
+	}
+	return strings.TrimSpace(r.APIKey)
 }
 
 // Resolve computes the effective credentials and URLs from overrides, environment variables,
@@ -206,39 +224,87 @@ func (s *Store) Resolve(cfg *Config, overrides Overrides) Resolved {
 	res := Resolved{
 		ProfileName:   profileName,
 		ProfileExists: prof != nil,
+		AuthType:      "none",
 		AuthSource:    "none",
 	}
 
 	if prof != nil {
 		res.OrganizationID = prof.OrganizationID
 		res.OrganizationName = prof.OrganizationName
+		res.UserID = prof.UserID
+		res.UserName = prof.UserName
 		res.UserEmail = prof.UserEmail
 		res.KeyID = prof.KeyID
+		res.SessionID = prof.SessionID
 	}
 
 	switch {
 	case strings.TrimSpace(overrides.APIKey) != "":
 		res.APIKey = strings.TrimSpace(overrides.APIKey)
+		res.AuthType = authTypeForToken(res.APIKey)
+		if res.AuthType == "user_session" {
+			res.AccessToken = res.APIKey
+			res.APIKey = ""
+		}
 		res.AuthSource = "flag"
 	case strings.TrimSpace(s.envLookup("KIBOTOS_API_KEY")) != "":
-		res.APIKey = strings.TrimSpace(s.envLookup("KIBOTOS_API_KEY"))
+		val := strings.TrimSpace(s.envLookup("KIBOTOS_API_KEY"))
+		res.AuthType = authTypeForToken(val)
+		if res.AuthType == "user_session" {
+			res.AccessToken = val
+		} else {
+			res.APIKey = val
+		}
 		res.AuthSource = "env:KIBOTOS_API_KEY"
 	case strings.TrimSpace(s.envLookup("KIBO_API_KEY")) != "":
-		res.APIKey = strings.TrimSpace(s.envLookup("KIBO_API_KEY"))
+		val := strings.TrimSpace(s.envLookup("KIBO_API_KEY"))
+		res.AuthType = authTypeForToken(val)
+		if res.AuthType == "user_session" {
+			res.AccessToken = val
+		} else {
+			res.APIKey = val
+		}
 		res.AuthSource = "env:KIBO_API_KEY"
+	case prof != nil && strings.TrimSpace(prof.AccessToken) != "":
+		res.AccessToken = strings.TrimSpace(prof.AccessToken)
+		res.AuthType = "user_session"
+		res.AuthSource = "profile:" + profileName
 	case prof != nil && strings.TrimSpace(prof.APIKey) != "":
 		res.APIKey = strings.TrimSpace(prof.APIKey)
+		res.AuthType = authTypeForToken(res.APIKey)
+		if res.AuthType == "user_session" {
+			res.AccessToken = res.APIKey
+			res.APIKey = ""
+		}
 		res.AuthSource = "profile:" + profileName
 	}
 
 	// If auth came from flag or env rather than profile, profile org/email/key metadata
-	// may not belong to that overriding key. Clear profile-specific metadata unless
-	// the key matches the profile key.
-	if res.AuthSource != "profile:"+profileName && (prof == nil || res.APIKey != strings.TrimSpace(prof.APIKey)) {
+	// may not belong to that overriding credential. Clear profile-specific metadata unless
+	// the credential matches the profile credential.
+	profileCred := ""
+	if prof != nil {
+		if strings.TrimSpace(prof.AccessToken) != "" {
+			profileCred = strings.TrimSpace(prof.AccessToken)
+		} else {
+			profileCred = strings.TrimSpace(prof.APIKey)
+		}
+	}
+	if res.AuthSource != "profile:"+profileName && (prof == nil || res.Credential() != profileCred) {
 		res.OrganizationID = ""
 		res.OrganizationName = ""
+		res.UserID = ""
+		res.UserName = ""
 		res.UserEmail = ""
 		res.KeyID = ""
+		res.SessionID = ""
+	}
+
+	if orgOverride := firstNonEmpty(overrides.Org, s.envLookup("KIBO_ORG"), s.envLookup("KIBOTOS_ORG")); orgOverride != "" {
+		if orgOverride != res.OrganizationID {
+			res.OrganizationID = orgOverride
+			res.OrganizationName = ""
+		}
 	}
 
 	var profAPIURL, profConsoleURL string
@@ -266,6 +332,13 @@ func (s *Store) Resolve(cfg *Config, overrides Overrides) Resolved {
 	return res
 }
 
+func authTypeForToken(tok string) string {
+	if strings.HasPrefix(strings.TrimSpace(tok), "kbs_") {
+		return "user_session"
+	}
+	return "api_key"
+}
+
 // ActiveProfileName returns the configured current profile or DefaultProfileName.
 func (c *Config) ActiveProfileName() string {
 	if c != nil && strings.TrimSpace(c.CurrentProfile) != "" {
@@ -287,8 +360,8 @@ func (c *Config) SortedProfileNames() []string {
 	return names
 }
 
-// MaskAPIKey returns a safe display representation of an API key, showing only its prefix
-// and last 4 characters.
+// MaskAPIKey returns a safe display representation of an API key or session token,
+// showing only its prefix and last 4 characters.
 func MaskAPIKey(key string) string {
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -296,6 +369,9 @@ func MaskAPIKey(key string) string {
 	}
 	if len(key) <= 8 {
 		return "****"
+	}
+	if strings.HasPrefix(key, "kbs_") {
+		return "kbs_..." + key[len(key)-4:]
 	}
 	if strings.HasPrefix(key, "kb_") {
 		return "kb_..." + key[len(key)-4:]

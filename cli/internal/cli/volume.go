@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/felinics/kibotos-sdk/cli/internal/output"
+	"github.com/felinics/kibotos-sdk/cli/internal/prompt"
 )
 
 func (a *App) newVolumeCmd() *cobra.Command {
@@ -54,8 +55,11 @@ func (a *App) newVolumeListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if cmd.Flags().Changed("limit") && limit <= 0 {
-				return usageError("--limit must be greater than zero")
+			if err := validateNonEmptyFlag(cmd, "zone", zone); err != nil {
+				return err
+			}
+			if err := validatePageLimit(cmd, limit); err != nil {
+				return err
 			}
 
 			client, _, err := a.requireClient()
@@ -92,6 +96,13 @@ func (a *App) newVolumeListCmd() *cobra.Command {
 			if len(page.UnavailableZones) > 0 {
 				p.Warnf("unavailable zones: %s", strings.Join(page.UnavailableZones, ", "))
 			}
+			if p.IsQuiet() {
+				ids := make([]string, 0, len(page.Data))
+				for _, v := range page.Data {
+					ids = append(ids, v.ID)
+				}
+				return p.IDs(ids)
+			}
 			if len(page.Data) == 0 {
 				_, _ = fmt.Fprintln(p.Out, "No volumes found.")
 				return nil
@@ -107,7 +118,7 @@ func (a *App) newVolumeListCmd() *cobra.Command {
 					output.EmptyDash(v.Name),
 					v.Zone,
 					strconv.Itoa(v.SizeGiB),
-					string(v.Status),
+					p.FormatStatus(string(v.Status)),
 					wsID,
 				})
 			}
@@ -116,9 +127,9 @@ func (a *App) newVolumeListCmd() *cobra.Command {
 	}
 
 	f := cmd.Flags()
-	f.StringVar(&zone, "zone", "", "Filter by zone ID")
+	f.StringVarP(&zone, "zone", "z", "", "Filter by zone ID")
 	f.StringVar(&attached, "attached", "", "Filter by attachment state: true or false")
-	f.StringArrayVar(&labels, "label", nil, "Filter by label (key=value, repeatable)")
+	f.StringArrayVarP(&labels, "label", "l", nil, "Filter by label (key=value, repeatable)")
 	f.IntVar(&limit, "limit", 0, "Maximum number of results per page (1-100)")
 	f.StringVar(&pageToken, "page-token", "", "Opaque pagination token from a previous response")
 	return cmd
@@ -126,15 +137,23 @@ func (a *App) newVolumeListCmd() *cobra.Command {
 
 func (a *App) newVolumeGetCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <id>",
+		Use:   "get [id-or-name]",
 		Short: "Get details of a persistent volume",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, _, err := a.requireClient()
 			if err != nil {
 				return err
 			}
-			vol, err := client.Volumes.Get(cmd.Context(), args[0])
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			volID, _, err := a.resolveVolume(cmd.Context(), client, ref, nil, "no volumes found", "Select a volume to inspect:")
+			if err != nil {
+				return err
+			}
+			vol, err := client.Volumes.Get(cmd.Context(), volID)
 			if err != nil {
 				return err
 			}
@@ -145,12 +164,13 @@ func (a *App) newVolumeGetCmd() *cobra.Command {
 
 func (a *App) newVolumeCreateCmd() *cobra.Command {
 	var (
-		sizeGiB     int
+		sizeRaw     string
 		name        string
 		zone        string
 		labels      []string
 		wait        bool
-		waitTimeout int
+		noWait      bool
+		waitTimeout string
 	)
 
 	cmd := &cobra.Command{
@@ -158,15 +178,35 @@ func (a *App) newVolumeCreateCmd() *cobra.Command {
 		Short: "Create a new persistent volume",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !cmd.Flags().Changed("size") || sizeGiB <= 0 {
-				return usageError("--size is required and must be greater than zero (GiB)")
+			var (
+				sizeGiB int
+				err     error
+			)
+			if cmd.Flags().Changed("size") {
+				sizeGiB, err = parseSizeGiB(sizeRaw, "size")
+				if err != nil {
+					return err
+				}
+			} else if !a.isInteractive() {
+				return missingFlagError("--size", "Pass --size <gib> (e.g. --size 50 or --size 50Gi).")
+			}
+
+			if cmd.Flags().Changed("name") {
+				name, err = validateResourceName(name, true)
+				if err != nil {
+					return err
+				}
+			}
+			if err := validateNonEmptyFlag(cmd, "zone", zone); err != nil {
+				return err
 			}
 			parsedLabels, err := parseLabels(labels)
 			if err != nil {
 				return err
 			}
-			if wait && waitTimeout <= 0 {
-				return usageError("--wait-timeout must be greater than zero")
+			shouldWait, waitDur, err := resolveWait(cmd, wait, noWait, waitTimeout)
+			if err != nil {
+				return err
 			}
 
 			client, _, err := a.requireClient()
@@ -174,6 +214,29 @@ func (a *App) newVolumeCreateCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
+
+			if sizeGiB == 0 {
+				sizeInput, err := a.prompter().Input("Volume size (e.g. 20Gi, 50Gi)", "20Gi", func(v string) error {
+					_, err := parseSizeGiB(v, "size")
+					return err
+				})
+				if err != nil {
+					return err
+				}
+				sizeGiB, _ = parseSizeGiB(sizeInput, "size")
+
+				if !cmd.Flags().Changed("name") {
+					enteredName, err := a.prompter().Input("Name (optional)", "", func(v string) error {
+						_, err := validateResourceName(v, true)
+						return err
+					})
+					if err != nil {
+						return err
+					}
+					name = enteredName
+				}
+			}
+
 			vol, err := client.Volumes.Create(ctx, kibotos.CreateVolumeParams{
 				Name:    strings.TrimSpace(name),
 				Zone:    strings.TrimSpace(zone),
@@ -184,27 +247,29 @@ func (a *App) newVolumeCreateCmd() *cobra.Command {
 				return err
 			}
 
-			if wait && vol.Status != kibotos.VolumeStatusAvailable {
-				a.printer().Statusf("Waiting for volume %s to reach available...", vol.ID)
+			if shouldWait && vol.Status != kibotos.VolumeStatusAvailable {
+				p := a.printer()
+				stopSpin := p.StartSpinner(fmt.Sprintf("Waiting for volume %s to reach available...", vol.ID))
 				vol, err = client.Volumes.Wait(ctx, vol.ID, kibotos.WaitVolumeParams{
 					Statuses: []kibotos.VolumeStatus{kibotos.VolumeStatusAvailable},
-					Timeout:  time.Duration(waitTimeout) * time.Second,
+					Timeout:  waitDur,
 				})
 				if err != nil {
+					stopSpin(fmt.Sprintf("Failed creating volume %s", vol.ID), false)
 					return err
 				}
+				stopSpin(fmt.Sprintf("Volume %s is available", vol.ID), true)
 			}
 			return a.renderVolume(vol)
 		},
 	}
 
 	f := cmd.Flags()
-	f.IntVar(&sizeGiB, "size", 0, "Volume size in GiB (required)")
-	f.StringVar(&name, "name", "", "Human-readable volume name")
-	f.StringVar(&zone, "zone", "", "Target zone ID")
-	f.StringArrayVar(&labels, "label", nil, "Volume label (key=value, repeatable)")
-	f.BoolVar(&wait, "wait", false, "Wait until the volume reaches available")
-	f.IntVar(&waitTimeout, "wait-timeout", defaultWaitTimeoutSeconds, "Maximum seconds to wait when --wait is set")
+	f.StringVarP(&sizeRaw, "size", "s", "", "Volume size (e.g. 50, 50Gi, 1Ti; bare integer is GiB)")
+	f.StringVarP(&name, "name", "n", "", "Human-readable volume name")
+	f.StringVarP(&zone, "zone", "z", "", "Target zone ID")
+	f.StringArrayVarP(&labels, "label", "l", nil, "Volume label (key=value, repeatable)")
+	addWaitFlags(cmd, &wait, &noWait, &waitTimeout, "the volume reaches available")
 	return cmd
 }
 
@@ -217,20 +282,59 @@ func (a *App) newVolumeUpdateCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "update <id>",
+		Use:   "update [id-or-name]",
 		Short: "Update a volume's name or labels",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			nameChanged := cmd.Flags().Changed("name")
 			if nameChanged && clearName {
 				return usageError("--name and --clear-name cannot be used together")
 			}
+			if nameChanged {
+				var err error
+				name, err = validateResourceName(name, false)
+				if err != nil {
+					return err
+				}
+			}
 			parsedLabels, err := parseUpdateLabels(labels, unsetLabels)
 			if err != nil {
 				return err
 			}
-			if !nameChanged && !clearName && len(parsedLabels) == 0 {
+			if !nameChanged && !clearName && len(parsedLabels) == 0 && !a.isInteractive() {
 				return usageError("specify at least one of --name, --clear-name, --label, or --unset-label")
+			}
+
+			client, _, err := a.requireClient()
+			if err != nil {
+				return err
+			}
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			volID, existing, err := a.resolveVolume(cmd.Context(), client, ref, nil, "no volumes found", "Select a volume to update:")
+			if err != nil {
+				return err
+			}
+
+			if !nameChanged && !clearName && len(parsedLabels) == 0 {
+				curName := ""
+				if existing != nil {
+					curName = existing.Name
+				}
+				newName, err := a.prompter().Input("New volume name", curName, func(v string) error {
+					_, err := validateResourceName(v, true)
+					return err
+				})
+				if err != nil {
+					return err
+				}
+				if newName == "" || newName == curName {
+					return usageError("no changes specified; pass --name, --clear-name, --label, or --unset-label")
+				}
+				name = newName
+				nameChanged = true
 			}
 
 			params := kibotos.UpdateVolumeParams{
@@ -242,11 +346,7 @@ func (a *App) newVolumeUpdateCmd() *cobra.Command {
 				params.Name = kibotos.Null[string]()
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
-			vol, err := client.Volumes.Update(cmd.Context(), args[0], params)
+			vol, err := client.Volumes.Update(cmd.Context(), volID, params)
 			if err != nil {
 				return err
 			}
@@ -255,30 +355,42 @@ func (a *App) newVolumeUpdateCmd() *cobra.Command {
 	}
 
 	f := cmd.Flags()
-	f.StringVar(&name, "name", "", "Set volume name")
+	f.StringVarP(&name, "name", "n", "", "Set volume name")
 	f.BoolVar(&clearName, "clear-name", false, "Clear the volume name (set to null)")
-	f.StringArrayVar(&labels, "label", nil, "Set a label (key=value, repeatable)")
+	f.StringArrayVarP(&labels, "label", "l", nil, "Set a label (key=value, repeatable)")
 	f.StringArrayVar(&unsetLabels, "unset-label", nil, "Remove a label by key (repeatable)")
 	return cmd
 }
 
 func (a *App) newVolumeResizeCmd() *cobra.Command {
 	var (
-		sizeGiB     int
+		sizeRaw     string
 		wait        bool
-		waitTimeout int
+		noWait      bool
+		waitTimeout string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "resize <id>",
+		Use:   "resize [id-or-name]",
 		Short: "Grow a persistent volume to a larger size",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !cmd.Flags().Changed("size") || sizeGiB <= 0 {
-				return usageError("--size is required and must be greater than zero (GiB)")
+			var (
+				sizeGiB int
+				err     error
+			)
+			if cmd.Flags().Changed("size") {
+				sizeGiB, err = parseSizeGiB(sizeRaw, "size")
+				if err != nil {
+					return err
+				}
+			} else if !a.isInteractive() {
+				return missingFlagError("--size", "Pass --size <gib> (e.g. --size 100 or --size 100Gi).")
 			}
-			if wait && waitTimeout <= 0 {
-				return usageError("--wait-timeout must be greater than zero")
+
+			shouldWait, waitDur, err := resolveWait(cmd, wait, noWait, waitTimeout)
+			if err != nil {
+				return err
 			}
 
 			client, _, err := a.requireClient()
@@ -286,121 +398,216 @@ func (a *App) newVolumeResizeCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			vol, err := client.Volumes.Resize(ctx, args[0], kibotos.ResizeVolumeParams{
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			volID, picked, err := a.resolveVolume(
+				ctx, client, ref,
+				func(v kibotos.Volume) bool { return v.Status == kibotos.VolumeStatusAvailable },
+				"no available volumes found to resize",
+				"Select an available volume to resize:",
+			)
+			if err != nil {
+				return err
+			}
+
+			if sizeGiB == 0 {
+				promptLabel := "New volume size (e.g. 100Gi)"
+				if picked != nil && picked.SizeGiB > 0 {
+					promptLabel = fmt.Sprintf("New volume size (current: %d GiB)", picked.SizeGiB)
+				}
+				sizeInput, err := a.prompter().Input(promptLabel, "", func(v string) error {
+					n, err := parseSizeGiB(v, "size")
+					if err != nil {
+						return err
+					}
+					if picked != nil && n <= picked.SizeGiB {
+						return fmt.Errorf("new size (%d GiB) must be larger than current size (%d GiB)", n, picked.SizeGiB)
+					}
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+				sizeGiB, _ = parseSizeGiB(sizeInput, "size")
+			} else if picked != nil && picked.SizeGiB > 0 && sizeGiB <= picked.SizeGiB {
+				return usageError("new size (%d GiB) must be larger than current volume size (%d GiB)", sizeGiB, picked.SizeGiB)
+			}
+
+			vol, err := client.Volumes.Resize(ctx, volID, kibotos.ResizeVolumeParams{
 				SizeGiB: sizeGiB,
 			})
 			if err != nil {
 				return err
 			}
 
-			if wait && vol.Status != kibotos.VolumeStatusAvailable {
-				a.printer().Statusf("Waiting for volume %s resize to complete...", vol.ID)
+			if shouldWait && vol.Status != kibotos.VolumeStatusAvailable {
+				p := a.printer()
+				stopSpin := p.StartSpinner(fmt.Sprintf("Waiting for volume %s resize to complete...", vol.ID))
 				vol, err = client.Volumes.Wait(ctx, vol.ID, kibotos.WaitVolumeParams{
 					Statuses: []kibotos.VolumeStatus{kibotos.VolumeStatusAvailable},
-					Timeout:  time.Duration(waitTimeout) * time.Second,
+					Timeout:  waitDur,
 				})
 				if err != nil {
+					stopSpin(fmt.Sprintf("Failed resizing volume %s", vol.ID), false)
 					return err
 				}
+				stopSpin(fmt.Sprintf("Volume %s resized to %d GiB", vol.ID, vol.SizeGiB), true)
 			}
 			return a.renderVolume(vol)
 		},
 	}
 
 	f := cmd.Flags()
-	f.IntVar(&sizeGiB, "size", 0, "New volume size in GiB (required)")
-	f.BoolVar(&wait, "wait", false, "Wait until the resize finishes")
-	f.IntVar(&waitTimeout, "wait-timeout", defaultWaitTimeoutSeconds, "Maximum seconds to wait when --wait is set")
+	f.StringVarP(&sizeRaw, "size", "s", "", "New volume size (e.g. 100, 100Gi; bare integer is GiB)")
+	addWaitFlags(cmd, &wait, &noWait, &waitTimeout, "the resize finishes")
 	return cmd
 }
 
 func (a *App) newVolumeDeleteCmd() *cobra.Command {
 	var (
 		wait        bool
-		waitTimeout int
+		noWait      bool
+		waitTimeout string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "delete <id>",
+		Use:   "delete [id-or-name]",
 		Short: "Delete a persistent volume",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if wait && waitTimeout <= 0 {
-				return usageError("--wait-timeout must be greater than zero")
+			shouldWait, waitDur, err := resolveWait(cmd, wait, noWait, waitTimeout)
+			if err != nil {
+				return err
 			}
 			client, _, err := a.requireClient()
 			if err != nil {
 				return err
 			}
 			ctx := cmd.Context()
-			vol, err := client.Volumes.Delete(ctx, args[0])
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			volID, picked, err := a.resolveVolume(ctx, client, ref, nil, "no volumes found", "Select a volume to delete:")
 			if err != nil {
 				return err
 			}
 
-			if wait {
-				a.printer().Statusf("Waiting for volume %s to be deleted...", vol.ID)
-				vol, err = a.waitVolumeDeleted(ctx, client, vol, time.Duration(waitTimeout)*time.Second)
+			targetLabel := volID
+			if picked != nil && picked.Name != "" {
+				targetLabel = fmt.Sprintf("%q (%s)", picked.Name, picked.ID)
+			}
+			ok, err := a.confirmDestructive(fmt.Sprintf("Delete volume %s?", targetLabel))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return prompt.ErrCancelled
+			}
+
+			vol, err := client.Volumes.Delete(ctx, volID)
+			if err != nil {
+				return err
+			}
+
+			if shouldWait {
+				p := a.printer()
+				stopSpin := p.StartSpinner(fmt.Sprintf("Waiting for volume %s to be deleted...", vol.ID))
+				vol, err = a.waitVolumeDeleted(ctx, client, vol, waitDur)
 				if err != nil {
+					stopSpin(fmt.Sprintf("Failed deleting volume %s", vol.ID), false)
 					return err
 				}
+				stopSpin(fmt.Sprintf("Volume %s deleted", vol.ID), true)
 			}
 			return a.renderVolume(vol)
 		},
 	}
 
-	cmd.Flags().BoolVar(&wait, "wait", false, "Wait until volume deletion completes")
-	cmd.Flags().IntVar(&waitTimeout, "wait-timeout", defaultWaitTimeoutSeconds, "Maximum seconds to wait when --wait is set")
+	addWaitFlags(cmd, &wait, &noWait, &waitTimeout, "volume deletion completes")
 	return cmd
 }
 
 func (a *App) newVolumeWaitCmd() *cobra.Command {
 	var (
-		statuses []string
-		timeout  int
+		statuses   []string
+		timeoutRaw string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "wait <id>",
+		Use:   "wait [id-or-name]",
 		Short: "Wait until a volume reaches one of the target statuses",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(statuses) == 0 {
-				return usageError("--status is required (e.g. --status available,failed)")
+			timeoutSec, err := parseDurationSeconds(timeoutRaw, "timeout")
+			if err != nil {
+				return err
 			}
-			if timeout <= 0 {
-				return usageError("--timeout must be greater than zero")
-			}
-			parsed := make([]kibotos.VolumeStatus, 0, len(statuses))
 			for _, raw := range statuses {
-				s := strings.TrimSpace(raw)
-				if s == "" {
-					continue
+				if s := strings.TrimSpace(raw); s != "" {
+					if _, err := validateVolumeStatus(s); err != nil {
+						return err
+					}
 				}
-				parsed = append(parsed, kibotos.VolumeStatus(s))
 			}
-			if len(parsed) == 0 {
-				return usageError("--status must include at least one non-empty status")
+			if len(statuses) == 0 && !a.isInteractive() {
+				return missingFlagError("--status", "Pass --status <s1,s2> (e.g. --status available,failed).")
 			}
 
 			client, _, err := a.requireClient()
 			if err != nil {
 				return err
 			}
-			vol, err := client.Volumes.Wait(cmd.Context(), args[0], kibotos.WaitVolumeParams{
-				Statuses: parsed,
-				Timeout:  time.Duration(timeout) * time.Second,
-			})
+			ctx := cmd.Context()
+			ref := ""
+			if len(args) > 0 {
+				ref = args[0]
+			}
+			volID, _, err := a.resolveVolume(ctx, client, ref, nil, "no volumes found", "Select a volume to wait on:")
 			if err != nil {
 				return err
 			}
+
+			if len(statuses) == 0 {
+				statuses = []string{"available", "failed"}
+			}
+
+			parsed := make([]kibotos.VolumeStatus, 0, len(statuses))
+			for _, raw := range statuses {
+				s := strings.TrimSpace(raw)
+				if s == "" {
+					continue
+				}
+				volStatus, err := validateVolumeStatus(s)
+				if err != nil {
+					return err
+				}
+				parsed = append(parsed, volStatus)
+			}
+			if len(parsed) == 0 {
+				return usageError("--status must include at least one non-empty status")
+			}
+
+			p := a.printer()
+			stopSpin := p.StartSpinner(fmt.Sprintf("Waiting for volume %s (%s)...", volID, strings.Join(statuses, ",")))
+			vol, err := client.Volumes.Wait(ctx, volID, kibotos.WaitVolumeParams{
+				Statuses: parsed,
+				Timeout:  time.Duration(timeoutSec) * time.Second,
+			})
+			if err != nil {
+				stopSpin(fmt.Sprintf("Wait failed for volume %s", volID), false)
+				return err
+			}
+			stopSpin(fmt.Sprintf("Volume %s reached %s", vol.ID, vol.Status), true)
 			return a.renderVolume(vol)
 		},
 	}
 
 	f := cmd.Flags()
-	f.StringSliceVar(&statuses, "status", nil, "Target status(es), comma-separated or repeatable (required)")
-	f.IntVar(&timeout, "timeout", defaultWaitCmdTimeoutSeconds, "Maximum seconds to wait")
+	f.StringSliceVarP(&statuses, "status", "s", nil, "Target status(es), comma-separated or repeatable")
+	f.StringVar(&timeoutRaw, "timeout", fmt.Sprintf("%ds", defaultWaitCmdTimeoutSeconds), "Maximum duration to wait (e.g. 30s, 3m, 30)")
 	return cmd
 }
 
@@ -408,6 +615,9 @@ func (a *App) renderVolume(vol *kibotos.Volume) error {
 	p := a.printer()
 	if p.IsJSON() {
 		return p.JSON(vol)
+	}
+	if p.IsQuiet() {
+		return p.ID(vol.ID)
 	}
 	wsID := "-"
 	if vol.WorkspaceID != nil && *vol.WorkspaceID != "" {
@@ -418,7 +628,7 @@ func (a *App) renderVolume(vol *kibotos.Volume) error {
 		{Key: "Name", Value: output.EmptyDash(vol.Name)},
 		{Key: "Zone", Value: vol.Zone},
 		{Key: "Size", Value: fmt.Sprintf("%d GiB", vol.SizeGiB)},
-		{Key: "Status", Value: string(vol.Status)},
+		{Key: "Status", Value: p.FormatStatus(string(vol.Status))},
 		{Key: "Workspace", Value: wsID},
 		{Key: "Labels", Value: output.FormatLabels(vol.Labels)},
 		{Key: "Created At", Value: output.FormatTime(vol.CreatedAt)},

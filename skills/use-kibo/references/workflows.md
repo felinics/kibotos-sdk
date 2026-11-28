@@ -13,20 +13,20 @@ kibo whoami --json
 # 2. Pick a ready template
 kibo template list --json
 
-# 3. Create workspace and block until available
+# 3. Create workspace (waits until available by default; -q prints just the ID)
 WS_ID=$(kibo workspace create \
   --template python-3.12 \
   --name preview-sandbox \
-  --timeout 1800 --timeout-action stop \
+  --timeout 30m --timeout-action stop \
   --label task=preview \
-  --wait --json | jq -r '.id')
+  -q)
 
 # 4. Expose port 8080 over HTTPS
-kibo exposure create "$WS_ID" --port 8080 --ttl 1800 --json
+kibo exposure create "$WS_ID" 8080 --ttl 30m --json
 
 # 5. Revoke exposure and delete workspace when finished (confirm with user first)
 kibo exposure revoke "$WS_ID" exp_... --json
-kibo workspace delete "$WS_ID" --wait --json
+kibo workspace delete "$WS_ID" --json
 ```
 
 ## Workflow 2: Stateful Workspace with a Persistent Volume
@@ -34,13 +34,13 @@ kibo workspace delete "$WS_ID" --wait --json
 Keep datasets, caches, or build artifacts across workspace lifecycles:
 
 ```bash
-# 1. Create a 50 GiB volume in global-1 and wait until available
+# 1. Create a 50 GiB volume in global-1 (waits until available by default)
 VOL_ID=$(kibo volume create \
-  --size 50 \
+  --size 50Gi \
   --name project-cache \
   --zone global-1 \
   --label project=alpha \
-  --wait --json | jq -r '.id')
+  -q)
 
 # 2. Create a workspace in the SAME zone mounting that volume at /data
 WS_ID=$(kibo workspace create \
@@ -49,11 +49,11 @@ WS_ID=$(kibo workspace create \
   --name alpha-worker \
   --volume "$VOL_ID" \
   --mount-path /data \
-  --wait --json | jq -r '.id')
+  -q)
 
 # 3. Later, stop the workspace (volume returns to available) and grow the volume to 100 GiB
-kibo workspace stop "$WS_ID" --wait --json
-kibo volume resize "$VOL_ID" --size 100 --wait --json
+kibo workspace stop "$WS_ID" --json
+kibo volume resize "$VOL_ID" --size 100Gi --json
 
 # 4. Detach the volume before deleting it or moving it to another workspace
 kibo workspace volume detach "$WS_ID" --json
@@ -69,13 +69,13 @@ WS_ID=$(kibo workspace create \
   --template python-3.12 \
   --name isolated-eval \
   --network deny_all \
-  --wait --json | jq -r '.id')
+  -q)
 
-# Temporarily enable internet to fetch dependencies, waiting until applied
-kibo workspace network "$WS_ID" --mode public_internet --wait --json
+# Temporarily enable internet to fetch dependencies (waits until applied by default)
+kibo workspace network "$WS_ID" --mode public_internet --json
 
 # Lock back down
-kibo workspace network "$WS_ID" --mode deny_all --wait --json
+kibo workspace network "$WS_ID" --mode deny_all --json
 ```
 
 ## Workflow 4: Managing Multiple Environments / Profiles

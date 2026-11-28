@@ -11,7 +11,20 @@ description: Authenticate kibo using browser Device Authorization Flow or API ke
 kibo login
 ```
 
-`kibo login` initiates a Device Authorization session against the Kibotos Console (`https://console.kibo.to`), prints a verification URL and one-time user code to `stderr`, opens your browser automatically, and polls until you approve the device. Once approved, a scoped API key and profile metadata (organization, user email, key ID, API URL) are saved locally.
+`kibo login` initiates a Device Authorization session against the Kibotos Console (`https://console.kibo.to`), prints a verification URL and one-time user code to `stderr`, opens your browser automatically, and polls until you confirm sign-in on that device. Once approved, `kibo` receives a **user-level CLI session token (`kbs_...`)** — managed alongside your browser sessions in **Account → Sessions** rather than minting an organization API key — and saves your profile locally.
+
+If your account belongs to multiple organizations, you can switch organizations anytime without re-logging in:
+
+```bash
+# List organizations accessible to your signed-in account
+kibo org list
+
+# Switch active organization for the current profile (interactive picker if omitted)
+kibo org use "Acme Corp"
+
+# Or override for a single command
+kibo ws list --org org_01j9...
+```
 
 ### Remote & SSH Sessions (`--no-browser`)
 
@@ -67,7 +80,7 @@ If no credentials are configured or the API returns HTTP `401`, `kibo whoami` ex
 
 ## Log Out (`kibo logout`)
 
-Remove saved credentials for the active profile (or a specific profile via `--profile`):
+Revoke the active CLI user session on the server (when signed in via `kibo login`) and remove saved local credentials for the active profile (or a specific profile via `--profile`):
 
 ```bash
 kibo logout
@@ -111,8 +124,9 @@ Profiles are stored atomically in JSON with `0600` file permissions inside a `07
 | Setting | Precedence |
 | --- | --- |
 | **Profile** | `--profile` > `KIBO_PROFILE` > `KIBOTOS_PROFILE` > `current_profile` in `config.json` > `default` |
-| **API Key** | `--api-key` > `KIBOTOS_API_KEY` > `KIBO_API_KEY` > active profile `api_key` |
+| **Credential** | `--api-key` > `KIBOTOS_API_KEY` > `KIBO_API_KEY` > active profile `access_token` (`kbs_...`) > active profile `api_key` (`kb_...`) |
+| **Organization** | `--org` > `KIBO_ORG` > `KIBOTOS_ORG` > active profile `organization_id` |
 | **API URL** | `--api-url` > `KIBOTOS_API_URL` > `KIBO_API_URL` > active profile `api_url` > `https://api.kibo.to/v1` |
 | **Console URL** | `--console-url` > `KIBOTOS_CONSOLE_URL` > `KIBO_CONSOLE_URL` > active profile `console_url` > `https://console.kibo.to` |
 
-> **Security**: `kibo whoami` and `kibo profile list` always mask API keys (`kb_...xxxx`). Avoid printing `~/.config/kibo/config.json` in logs or shared terminals.
+> **Security**: `kibo whoami` and `kibo profile list` always mask credentials (`kbs_...xxxx` / `kb_...xxxx`). Avoid printing `~/.config/kibo/config.json` in logs or shared terminals.

@@ -42,19 +42,14 @@ kibo whoami
 kibo zone list
 kibo template list
 
-# 4. Create a workspace and wait until it is available
-kibo workspace create \
-  --template python-3.12 \
-  --name devbox \
-  --timeout 3600 \
-  --timeout-action stop \
-  --wait
+# 4. Create a workspace interactively, or pass flags directly (waits until available by default)
+kibo ws create -t python-3.12 -n devbox --timeout 1h --timeout-action stop
 
-# 5. Expose port 8080 over a temporary HTTPS URL
-kibo exposure create wks_... --port 8080 --ttl 3600
+# 5. Expose port 8080 over a temporary HTTPS URL (accepts workspace ID or unique name)
+kibo exp create devbox 8080 --ttl 1h
 
-# 6. Clean up when finished
-kibo workspace delete wks_... --wait
+# 6. Clean up when finished (waits until deleted by default; pass --no-wait to return immediately)
+kibo ws delete devbox
 ```
 
 ## Command Overview
@@ -63,8 +58,9 @@ kibo workspace delete wks_... --wait
 | --- | --- | --- |
 | `kibo login` | — | Interactive browser Device Flow or `--api-key` login |
 | `kibo logout` | — | Remove saved credentials for a profile |
-| `kibo whoami` | — | Show active profile, auth source, and live zone check |
-| `kibo profile` | `profiles` | `list`, `use <name>`, `delete <name>` |
+| `kibo whoami` | — | Show active profile, auth type (`user_session` / `api_key`), and live zone check |
+| `kibo org` | `orgs`, `organization`, `organizations` | `list`, `use [id-or-name]` (switch organization for CLI user session) |
+| `kibo profile` | `profiles` | `list`, `use [name]`, `delete [name]` |
 | `kibo workspace` | `ws`, `workspaces` | `list`, `get`, `create`, `update`, `delete`, `start`, `stop`, `timeout`, `network`, `volume attach\|detach`, `wait` |
 | `kibo volume` | `vol`, `volumes` | `list`, `get`, `create`, `update`, `resize`, `delete`, `wait` |
 | `kibo exposure` | `exp`, `exposures` | `list`, `get`, `create`, `revoke` |
@@ -79,17 +75,27 @@ Available on every `kibo` command:
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--json` | `false` | Output strictly valid JSON to `stdout` (shorthand for `-o json`). |
-| `-o`, `--output <format>` | `table` | Output format: `table` or `json`. |
+| `-o`, `--output <format>` | `table` | Output format: `table` or `json` (env: `KIBO_OUTPUT`). |
+| `-q`, `--quiet` | `false` | Output only resource IDs to `stdout` and suppress progress messages. |
+| `--no-input` | `false` | Disable interactive prompts and fail fast on missing inputs (env: `KIBO_NO_INPUT`). |
+| `-y`, `--yes` | `false` | Skip interactive confirmation prompts on destructive actions. |
+| `--no-color` | `false` | Disable colored output (also respects `NO_COLOR`). |
 | `--profile <name>` | active profile | Named profile from `config.json` to use for this command. |
 | `--api-key <key>` | — | Override the Kibotos API key (`kb_...`) for this invocation. |
 | `--api-url <url>` | `https://api.kibo.to/v1` | Override the Kibotos v1 API base URL. |
 
+## Interactive vs. Non-Interactive Mode
+
+- **Interactive terminal (TTY)**: Missing required flags or resource IDs open minimal inline arrow-key selectors (`↑`/`↓` + `Enter`, e.g., `kibo ws create`, `kibo ws stop`, `kibo exp create`), async commands wait by default with a progress spinner on `stderr`, and destructive commands ask `[y/N]` confirmation unless `-y` is passed.
+- **Non-interactive (Agents, CI, pipes, `--json`, `-q`, `--no-input`, `CI=true`, `KIBO_NO_INPUT=1`)**: Prompts are automatically disabled so commands never hang on `stdin`. Missing inputs fail immediately with exit code `2` and actionable hints.
+
 ## Scripting & JSON Mode
 
-Pass `--json` (or `-o json`) whenever piping output to `jq`, scripts, or AI agents:
+Pass `--json` (or `-o json`, or set `KIBO_OUTPUT=json`) whenever piping output to `jq`, scripts, or AI agents:
 
 - `stdout` contains **strictly valid JSON** on success.
-- Progress updates (such as `--wait` messages), interactive login URLs/codes, multi-zone warnings, and structured error envelopes are always written to `stderr`.
+- Progress updates, interactive login URLs/codes, multi-zone warnings, and structured error envelopes are always written to `stderr`.
+- All async lifecycle commands wait for completion by default; pass `--no-wait` (or `--wait=false`) when you want immediate `202` async return.
 
 In `--json` mode, errors are written to `stderr` using a consistent JSON envelope:
 

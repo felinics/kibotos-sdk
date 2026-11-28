@@ -44,8 +44,11 @@ func (a *App) newTemplateListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if cmd.Flags().Changed("limit") && limit <= 0 {
-				return usageError("--limit must be greater than zero")
+			if err := validateNonEmptyFlag(cmd, "zone", zone); err != nil {
+				return err
+			}
+			if err := validatePageLimit(cmd, limit); err != nil {
+				return err
 			}
 
 			client, _, err := a.requireClient()
@@ -81,6 +84,13 @@ func (a *App) newTemplateListCmd() *cobra.Command {
 			if len(page.UnavailableZones) > 0 {
 				p.Warnf("unavailable zones: %s", strings.Join(page.UnavailableZones, ", "))
 			}
+			if p.IsQuiet() {
+				ids := make([]string, 0, len(page.Data))
+				for _, t := range page.Data {
+					ids = append(ids, t.ID)
+				}
+				return p.IDs(ids)
+			}
 			if len(page.Data) == 0 {
 				_, _ = fmt.Fprintln(p.Out, "No templates found.")
 				return nil
@@ -101,7 +111,7 @@ func (a *App) newTemplateListCmd() *cobra.Command {
 
 	f := cmd.Flags()
 	f.StringVar(&owner, "owner", "", "Filter by template owner (platform or organization)")
-	f.StringVar(&zone, "zone", "", "Filter by zone ID")
+	f.StringVarP(&zone, "zone", "z", "", "Filter by zone ID")
 	f.IntVar(&limit, "limit", 0, "Maximum number of results per page (1-100)")
 	f.StringVar(&pageToken, "page-token", "", "Opaque pagination token from a previous response")
 	return cmd
@@ -109,21 +119,38 @@ func (a *App) newTemplateListCmd() *cobra.Command {
 
 func (a *App) newTemplateGetCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <id>",
+		Use:   "get [id]",
 		Short: "Get details of a workspace template",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, _, err := a.requireClient()
 			if err != nil {
 				return err
 			}
-			tpl, err := client.Templates.Get(cmd.Context(), args[0])
+			ctx := cmd.Context()
+			tplID := ""
+			if len(args) > 0 {
+				tplID = strings.TrimSpace(args[0])
+			} else if a.isInteractive() {
+				picked, err := a.resolveTemplate(ctx, client, "")
+				if err != nil {
+					return err
+				}
+				tplID = picked.ID
+			} else {
+				return usageErrorWithHint("Pass a template ID. Run `kibo template list --json` to see available templates.", "template ID is required")
+			}
+
+			tpl, err := client.Templates.Get(ctx, tplID)
 			if err != nil {
 				return err
 			}
 			p := a.printer()
 			if p.IsJSON() {
 				return p.JSON(tpl)
+			}
+			if p.IsQuiet() {
+				return p.ID(tpl.ID)
 			}
 			latest := "-"
 			if tpl.LatestRevision != nil {
@@ -151,12 +178,12 @@ func (a *App) newTemplateRevisionsCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "revisions <id>",
+		Use:   "revisions [id]",
 		Short: "List revisions for a workspace template",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("limit") && limit <= 0 {
-				return usageError("--limit must be greater than zero")
+			if err := validatePageLimit(cmd, limit); err != nil {
+				return err
 			}
 
 			client, _, err := a.requireClient()
@@ -164,11 +191,24 @@ func (a *App) newTemplateRevisionsCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
+			tplID := ""
+			if len(args) > 0 {
+				tplID = strings.TrimSpace(args[0])
+			} else if a.isInteractive() {
+				picked, err := a.resolveTemplate(ctx, client, "")
+				if err != nil {
+					return err
+				}
+				tplID = picked.ID
+			} else {
+				return usageErrorWithHint("Pass a template ID. Run `kibo template list --json` to see available templates.", "template ID is required")
+			}
+
 			p := a.printer()
 
 			var page *kibotos.Page[kibotos.TemplateRevision]
 			if cmd.Flags().Changed("limit") || cmd.Flags().Changed("page-token") {
-				page, err = client.Templates.ListRevisions(ctx, args[0], &kibotos.TemplateRevisionListParams{
+				page, err = client.Templates.ListRevisions(ctx, tplID, &kibotos.TemplateRevisionListParams{
 					Limit:     limit,
 					PageToken: pageToken,
 				})
@@ -176,7 +216,7 @@ func (a *App) newTemplateRevisionsCmd() *cobra.Command {
 					return err
 				}
 			} else {
-				page, err = collectAllTemplateRevisions(ctx, client, args[0])
+				page, err = collectAllTemplateRevisions(ctx, client, tplID)
 				if err != nil {
 					return err
 				}
@@ -184,6 +224,13 @@ func (a *App) newTemplateRevisionsCmd() *cobra.Command {
 
 			if p.IsJSON() {
 				return p.JSON(page)
+			}
+			if p.IsQuiet() {
+				ids := make([]string, 0, len(page.Data))
+				for _, rev := range page.Data {
+					ids = append(ids, rev.ID)
+				}
+				return p.IDs(ids)
 			}
 			if len(page.Data) == 0 {
 				_, _ = fmt.Fprintln(p.Out, "No template revisions found.")
@@ -197,7 +244,7 @@ func (a *App) newTemplateRevisionsCmd() *cobra.Command {
 				}
 				rows = append(rows, []string{
 					rev.ID,
-					rev.Status,
+					p.FormatStatus(rev.Status),
 					sizeStr,
 					output.EmptyDash(strings.Join(rev.Zones, ",")),
 					output.FormatTimePtr(rev.ReadyAt),
@@ -230,6 +277,9 @@ func (a *App) newTemplateRevisionCmd() *cobra.Command {
 			if p.IsJSON() {
 				return p.JSON(rev)
 			}
+			if p.IsQuiet() {
+				return p.ID(rev.ID)
+			}
 			sizeStr := "-"
 			if rev.SizeMiB != nil {
 				sizeStr = fmt.Sprintf("%d MiB", *rev.SizeMiB)
@@ -237,7 +287,7 @@ func (a *App) newTemplateRevisionCmd() *cobra.Command {
 			items := []output.KV{
 				{Key: "ID", Value: rev.ID},
 				{Key: "Template ID", Value: rev.TemplateID},
-				{Key: "Status", Value: rev.Status},
+				{Key: "Status", Value: p.FormatStatus(rev.Status)},
 				{Key: "Size", Value: sizeStr},
 				{Key: "Zones", Value: output.EmptyDash(strings.Join(rev.Zones, ", "))},
 				{Key: "Created At", Value: output.FormatTimePtr(rev.CreatedAt)},

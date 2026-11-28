@@ -26,8 +26,8 @@ func (a *App) newZoneCmd() *cobra.Command {
 		Short: "List available compute zones",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("limit") && limit <= 0 {
-				return usageError("--limit must be greater than zero")
+			if err := validatePageLimit(cmd, limit); err != nil {
+				return err
 			}
 
 			client, _, err := a.requireClient()
@@ -64,6 +64,13 @@ func (a *App) newZoneCmd() *cobra.Command {
 			if p.IsJSON() {
 				return p.JSON(page)
 			}
+			if p.IsQuiet() {
+				ids := make([]string, 0, len(page.Data))
+				for _, z := range page.Data {
+					ids = append(ids, z.ID)
+				}
+				return p.IDs(ids)
+			}
 			if len(page.Data) == 0 {
 				_, _ = fmt.Fprintln(p.Out, "No zones found.")
 				return nil
@@ -83,7 +90,7 @@ func (a *App) newZoneCmd() *cobra.Command {
 					output.EmptyDash(z.DisplayName),
 					output.EmptyDash(z.Region),
 					country,
-					string(z.Status),
+					p.FormatStatus(string(z.Status)),
 					def,
 				})
 			}

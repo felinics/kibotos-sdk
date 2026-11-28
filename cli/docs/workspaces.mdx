@@ -7,38 +7,41 @@ Manage microVM workspaces using `kibo workspace` (aliases: `ws`, `workspaces`).
 
 ## Create a Workspace
 
+Run `kibo ws create` with no flags in an interactive terminal for a guided prompt, or pass flags directly. Async lifecycle commands (`create`, `start`, `stop`, `delete`, `network`) **wait until completion by default** (pass `--no-wait` to return immediately):
+
 ```bash
 kibo workspace create \
-  --template python-3.12 \
-  --name agent-sandbox \
-  --zone global-1 \
-  --vcpus 2 --memory 4096 --disk 20480 \
+  -t python-3.12 \
+  -n agent-sandbox \
+  -z global-1 \
+  --vcpus 2 --memory 4Gi --disk 20Gi \
   --network public_internet \
-  --timeout 3600 --timeout-action stop \
-  --label team=ml --label env=dev \
-  --wait --json
+  --timeout 1h --timeout-action stop \
+  -l team=ml -l env=dev \
+  --json
 ```
 
 ### `kibo workspace create` Flags
 
 | Flag | Required | Default | Description |
 | --- | --- | --- | --- |
-| `--template <id>` | Yes | — | Template ID. |
+| `-t`, `--template <id>` | Yes (prompted in TTY) | — | Template ID (also accepts `template@revision`). |
 | `--revision <rev>` | No | template default | Specific template revision ID. |
-| `--name <name>` | No | — | Human-readable workspace name. |
-| `--zone <zone>` | No | org default zone | Target zone ID. |
+| `-n`, `--name <name>` | No | — | Human-readable workspace name. |
+| `-z`, `--zone <zone>` | No | org default zone | Target zone ID. |
 | `--vcpus <n>` | No | template default | vCPU count override. |
-| `--memory <mib>` | No | template default | Memory allocation in MiB. |
-| `--disk <mib>` | No | template default | Root disk size in MiB. |
+| `--memory <size>` | No | template default | Memory allocation (`4Gi`, `4096`; bare integer is MiB). |
+| `--disk <size>` | No | template default | Root disk size (`20Gi`, `20480`; bare integer is MiB). |
 | `--network <mode>` | No | `public_internet` | Outbound network mode: `public_internet` or `deny_all`. |
-| `--volume <vol_id>` | No | — | Existing persistent volume ID to attach at creation. |
+| `--volume <vol>` | No | — | Existing persistent volume ID or name to attach at creation. |
 | `--mount-path <path>` | No | — | Mount path inside the workspace (e.g. `/data`; requires `--volume`). |
 | `--delete-volume` | No | `false` | Delete the attached volume when this workspace is deleted (requires `--volume`). |
-| `--timeout <sec>` | No | — | Auto-timeout duration in seconds. |
+| `--timeout <dur>` | No | — | Auto-timeout duration (`1h`, `30m`, `3600`; bare integer is seconds). |
 | `--timeout-action <action>` | No | — | Action on timeout expiration: `stop` or `delete` (requires `--timeout`). |
-| `--label <key=value>` | No | — | Workspace label (repeatable). |
-| `--wait` | No | `false` | Block until workspace status reaches `available`. |
-| `--wait-timeout <sec>` | No | `300` | Maximum seconds to wait when `--wait` is set. |
+| `-l`, `--label <key=value>` | No | — | Workspace label (repeatable). |
+| `--wait` | No | `true` | Block until workspace status reaches `available` (default `true`). |
+| `--no-wait` | No | `false` | Return immediately without waiting for completion. |
+| `--wait-timeout <dur>` | No | `5m` (`300s`) | Maximum duration to wait. |
 
 ## List and Inspect Workspaces
 
@@ -74,37 +77,37 @@ kibo ws update wks_01j9... --clear-name
 
 ## Start, Stop, and Delete
 
-All lifecycle mutations accept `--wait` and `--wait-timeout <sec>` (default `300`):
+All lifecycle commands accept a workspace ID or unique name (or prompt interactively in a TTY if omitted) and **wait by default** (pass `--no-wait` to return immediately, or `--wait-timeout <dur>` to override the `5m` wait window):
 
 ```bash
-# Gracefully stop and wait until stopped
-kibo ws stop wks_01j9... --wait
+# Gracefully stop (waits until stopped by default)
+kibo ws stop agent-sandbox
 
-# Force immediate power-off
-kibo ws stop wks_01j9... --force --wait
+# Force immediate power-off (asks confirmation in TTY unless -y is passed)
+kibo ws stop agent-sandbox --force -y
 
 # Start a stopped workspace with a fresh 2-hour auto-stop timeout
-kibo ws start wks_01j9... --timeout 7200 --timeout-action stop --wait
+kibo ws start agent-sandbox --timeout 2h --timeout-action stop
 
 # Delete and wait until removed (returns status "deleted" when complete)
-kibo ws delete wks_01j9... --wait
+kibo ws delete agent-sandbox -y
 ```
 
 ## Update Timeout Policy
 
-Extend or change the auto-timeout on a workspace (`--seconds` is required):
+Extend or change the auto-timeout on a workspace (`--seconds` accepts durations like `2h` or bare seconds like `7200`; prompted in TTY if omitted):
 
 ```bash
-kibo ws timeout wks_01j9... --seconds 7200 --action stop
+kibo ws timeout agent-sandbox --seconds 2h --action stop
 ```
 
 ## Configure Outbound Network
 
-Switch between `public_internet` and `deny_all`. Pass `--wait` to block until `network.applied` becomes `true`:
+Switch between `public_internet` and `deny_all` (waits until `network.applied` becomes `true` by default; pass `--no-wait` for immediate return):
 
 ```bash
-kibo ws network wks_01j9... --mode deny_all --wait
-kibo ws network wks_01j9... --mode public_internet --wait
+kibo ws network agent-sandbox --mode deny_all
+kibo ws network agent-sandbox --mode public_internet
 ```
 
 ## Attach and Detach Persistent Volumes

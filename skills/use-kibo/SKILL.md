@@ -27,15 +27,17 @@ kibo whoami --json
 
 Follow these rules on every `kibo` invocation:
 
-1. **Always pass `--json` (or `-o json`)**:
-   - In `--json` mode, `stdout` is strictly valid JSON.
-   - Progress updates (e.g., waiting messages), interactive login URLs/codes, multi-zone warnings, and structured error envelopes (`{"error": {...}}`) are always written to `stderr`.
-2. **Always pass `--wait` on async lifecycle commands**:
-   - Creation, start, stop, deletion, live network changes, and volume creation/resize/deletion return asynchronously (`202`). Pass `--wait` (and `--wait-timeout <sec>` if needed, default `300`) so the resource finishes transitioning before your next step.
+1. **Always pass `--json` (or `-o json`, or set `KIBO_OUTPUT=json`)**:
+   - In `--json` mode, `stdout` is strictly valid JSON and interactive prompts are automatically disabled (never blocks on `stdin`).
+   - Progress updates, interactive login URLs/codes, multi-zone warnings, and structured error envelopes (`{"error": {...}}`) are always written to `stderr`.
+   - For simple shell capture where you only need the resource ID, `-q` (`--quiet`) prints bare IDs to `stdout`.
+2. **Async lifecycle commands wait by default (`--no-wait` for parallel fan-out)**:
+   - Creation, start, stop, deletion, live network changes, and volume creation/resize/deletion **wait until completion by default** (`--wait-timeout` defaults to `5m` / `300s`).
+   - Pass `--no-wait` only when you intentionally want to trigger multiple operations in parallel and wait on them afterwards.
 3. **Check exit codes & `retryable` errors**:
    - `0` = success
    - `1` = API or runtime error (parse stderr JSON for `error.code`, `error.retryable`, `error.request_id`)
-   - `2` = invalid usage, arguments, or flag values — fix the command rather than retrying
+   - `2` = invalid usage, missing flag (`error.details.missing_flags`), ambiguous name (`error.details.candidates`), or flag validation error — inspect `error.hint` and fix the command rather than retrying
    - `3` = unauthenticated — prompt the user to run `kibo login` or set `KIBOTOS_API_KEY`
    - When `error.retryable` is `true` (e.g., `operation_in_progress`, `wait_timeout`, `rate_limited`, `capacity_unavailable`), back off briefly and retry.
 4. **Protect secrets**:
@@ -54,22 +56,22 @@ kibo template get python-3.12 --json
 kibo template revisions python-3.12 --json
 ```
 
-### Spin Up a Kibo Workspace (and Wait Until Available)
+### Spin Up a Kibo Workspace (Waits Until Available by Default)
 
 ```bash
 kibo workspace create \
   --template python-3.12 \
   --name agent-sandbox \
-  --vcpus 2 --memory 4096 --disk 20480 \
-  --timeout 3600 --timeout-action stop \
+  --vcpus 2 --memory 4Gi --disk 20Gi \
+  --timeout 1h --timeout-action stop \
   --label purpose=agent-run \
-  --wait --json
+  --json
 ```
 
 ### Expose a Service Port over Temporary HTTPS
 
 ```bash
-kibo exposure create wks_... --port 8080 --ttl 3600 --json
+kibo exposure create wks_... --port 8080 --ttl 1h --json
 # Returns an active https://<token>.kibo.run URL
 ```
 
@@ -79,28 +81,28 @@ Volumes must be in the same zone as the workspace and attached while the workspa
 
 ```bash
 # Option A: Create volume, then create workspace with it mounted
-kibo volume create --size 50 --name workspace-data --zone global-1 --wait --json
+kibo volume create --size 50Gi --name workspace-data --zone global-1 --json
 kibo workspace create --template python-3.12 --zone global-1 \
-  --volume vol_... --mount-path /data --wait --json
+  --volume vol_... --mount-path /data --json
 
 # Option B: Attach to an existing workspace
-kibo workspace stop wks_... --wait --json
+kibo workspace stop wks_... --json
 kibo workspace volume attach wks_... --volume vol_... --mount-path /data --json
-kibo workspace start wks_... --wait --json
+kibo workspace start wks_... --json
 ```
 
 ### Extend Timeout, Toggle Network, Stop, or Clean Up
 
 ```bash
 # Extend available workspace timeout by 2 hours
-kibo workspace timeout wks_... --seconds 7200 --action stop --json
+kibo workspace timeout wks_... --seconds 2h --action stop --json
 
-# Lock down outbound internet access (and wait until applied)
-kibo workspace network wks_... --mode deny_all --wait --json
+# Lock down outbound internet access (waits until applied by default)
+kibo workspace network wks_... --mode deny_all --json
 
-# Stop or delete cleanly
-kibo workspace stop wks_... --wait --json
-kibo workspace delete wks_... --wait --json
+# Stop or delete cleanly (waits until complete by default; pass --no-wait to return immediately)
+kibo workspace stop wks_... --json
+kibo workspace delete wks_... --json
 ```
 
 ## 4. Detailed References
