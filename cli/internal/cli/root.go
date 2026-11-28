@@ -122,6 +122,12 @@ func NewRootCommand(opts Options) *cobra.Command {
 		app.newWorkspaceCmd(),
 		app.newVolumeCmd(),
 		app.newExposureCmd(),
+		app.newExecCmd(),
+		app.newFilesCmd(),
+		app.newTunnelCmd(),
+		app.newPackCmd(),
+		app.newEgressCmd(),
+		app.newResolverCmd(),
 		app.newVersionCmd(),
 	)
 
@@ -151,6 +157,9 @@ func Execute(ctx context.Context, args []string, opts Options) int {
 	root.SetArgs(args)
 
 	if err := root.ExecuteContext(ctx); err != nil {
+		if status, ok := err.(processStatus); ok {
+			return int(status)
+		}
 		code, detail := classifyError(err)
 		if argsWantJSON(args, envLookup) {
 			p := &output.Printer{Out: opts.Stdout, Err: opts.Stderr, Format: output.FormatJSON}
@@ -384,7 +393,7 @@ func (a *App) newClientFromResolved(res config.Resolved) (*kibotos.Client, error
 	if res.AuthType == "user_session" && strings.TrimSpace(res.OrganizationID) != "" {
 		baseClient := hc
 		if baseClient == nil {
-			baseClient = &http.Client{Timeout: 60 * time.Second}
+			baseClient = &http.Client{}
 		}
 		baseRT := baseClient.Transport
 		if baseRT == nil {

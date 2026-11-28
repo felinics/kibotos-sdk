@@ -49,6 +49,9 @@ type Client struct {
 	Workspaces *WorkspacesService
 	Volumes    *VolumesService
 	Exposures  *ExposuresService
+	Packs      *PacksService
+	Egresses   *EgressesService
+	Resolvers  *ResolversService
 }
 
 // ClientOption configures a Client.
@@ -170,6 +173,9 @@ func NewClient(apiKey string, opts ...ClientOption) (*Client, error) {
 	c.Workspaces = &WorkspacesService{client: c}
 	c.Volumes = &VolumesService{client: c}
 	c.Exposures = &ExposuresService{client: c}
+	c.Packs = &PacksService{client: c}
+	c.Egresses = &EgressesService{client: c}
+	c.Resolvers = &ResolversService{client: c}
 	return c, nil
 }
 
@@ -228,6 +234,7 @@ type requestOptions struct {
 	headers          http.Header
 	skipTimeoutRetry bool
 	perAttemptLimit  time.Duration
+	generateKey      bool
 }
 
 // WithIdempotencyKey sets the Idempotency-Key header on a request.
@@ -254,17 +261,22 @@ func withWaitRequestConfig(perAttempt time.Duration) RequestOption {
 	}
 }
 
-func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any, opts ...RequestOption) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
+func collectRequestOptions(opts []RequestOption) requestOptions {
 	var reqOpts requestOptions
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&reqOpts)
 		}
 	}
+	return reqOpts
+}
+
+func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any, opts ...RequestOption) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	reqOpts := collectRequestOptions(opts)
 
 	var payload []byte
 	if body != nil {
@@ -281,7 +293,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if idempotencyKey == "" && reqOpts.headers != nil {
 		idempotencyKey = reqOpts.headers.Get("Idempotency-Key")
 	}
-	if idempotencyKey == "" && method == http.MethodPost {
+	if idempotencyKey == "" && (method == http.MethodPost || reqOpts.generateKey) {
 		var err error
 		idempotencyKey, err = newUUIDv4()
 		if err != nil {
@@ -289,10 +301,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 	}
 
-	fullURL := c.baseURL + path
-	if len(query) > 0 {
-		fullURL += "?" + query.Encode()
-	}
+	fullURL := c.requestURL(path, query)
 
 	perAttemptTimeout := c.timeout
 	if reqOpts.perAttemptLimit > 0 {
@@ -324,11 +333,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			return fmt.Errorf("kibotos: build request: %w", err)
 		}
 
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		req.Header.Set("Accept", "application/json")
-		if c.userAgent != "" {
-			req.Header.Set("User-Agent", c.userAgent)
-		}
+		c.setDefaultHeaders(req.Header, "application/json")
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
@@ -408,6 +413,32 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 
 	return lastErr
+}
+
+func requestJSON[T any](ctx context.Context, c *Client, method, path string, query url.Values, body any, opts []RequestOption) (*T, error) {
+	result := new(T)
+	if err := c.do(ctx, method, path, query, body, result, opts...); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *Client) requestURL(path string, query url.Values) string {
+	fullURL := c.baseURL + path
+	if len(query) > 0 {
+		fullURL += "?" + query.Encode()
+	}
+	return fullURL
+}
+
+func (c *Client) setDefaultHeaders(headers http.Header, accept string) {
+	headers.Set("Authorization", "Bearer "+c.apiKey)
+	if accept != "" {
+		headers.Set("Accept", accept)
+	}
+	if c.userAgent != "" {
+		headers.Set("User-Agent", c.userAgent)
+	}
 }
 
 func (c *Client) backoffDelay(attempt int) time.Duration {

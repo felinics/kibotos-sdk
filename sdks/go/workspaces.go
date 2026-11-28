@@ -58,8 +58,29 @@ type WorkspaceResources struct {
 
 // WorkspaceNetwork describes a workspace's network policy and application state.
 type WorkspaceNetwork struct {
-	Mode    NetworkMode `json:"mode"`
-	Applied bool        `json:"applied"`
+	Mode      NetworkMode           `json:"mode"`
+	Allow     []string              `json:"allow"`
+	Deny      []string              `json:"deny"`
+	Egresses  []NetworkEgressRule   `json:"egresses"`
+	Resolvers []NetworkResolverRule `json:"resolvers"`
+	Applied   *bool                 `json:"applied"` // nil when the workspace is not running
+}
+
+// NetworkEgressRule routes the listed IP addresses or CIDRs through an egress.
+type NetworkEgressRule struct {
+	EgressID     string   `json:"egress_id"`
+	Destinations []string `json:"destinations"`
+}
+
+// NetworkResolverRule selects a DNS upstream and how to reach it.
+type NetworkResolverRule struct {
+	ResolverID string              `json:"resolver_id"`
+	Path       NetworkResolverPath `json:"path"`
+}
+
+type NetworkResolverPath struct {
+	Type     string `json:"type"` // direct or egress
+	EgressID string `json:"egress_id,omitempty"`
 }
 
 // WorkspaceVolume describes a volume attached to a workspace.
@@ -86,10 +107,19 @@ type Workspace struct {
 	Resources WorkspaceResources `json:"resources"`
 	Network   WorkspaceNetwork   `json:"network"`
 	Volume    *WorkspaceVolume   `json:"volume"`
+	Volumes   []WorkspaceVolume  `json:"volumes"`
+	Packs     []WorkspacePack    `json:"packs"`
 	Timeout   *WorkspaceTimeout  `json:"timeout"`
 	Labels    map[string]string  `json:"labels"`
 	CreatedAt time.Time          `json:"created_at"`
 	UpdatedAt time.Time          `json:"updated_at"`
+}
+
+// WorkspacePack is a Pack and its resolved revision on a workspace.
+type WorkspacePack struct {
+	ID                   string   `json:"id"`
+	Revision             string   `json:"revision"`
+	ProvidedCapabilities []string `json:"provided_capabilities"`
 }
 
 // WorkspaceTemplateSpec specifies the template when creating a workspace.
@@ -98,24 +128,35 @@ type WorkspaceTemplateSpec struct {
 	Revision string `json:"revision,omitempty"`
 }
 
-// WorkspaceResourcesSpec specifies optional compute overrides when creating a workspace.
-type WorkspaceResourcesSpec struct {
+// WorkspaceResourcesInput specifies optional compute overrides.
+type WorkspaceResourcesInput struct {
 	VCPUs     int `json:"vcpus,omitempty"`
 	MemoryMiB int `json:"memory_mib,omitempty"`
 	DiskMiB   int `json:"disk_mib,omitempty"`
 }
 
-// WorkspaceNetworkSpec specifies the network mode for a workspace.
-type WorkspaceNetworkSpec struct {
-	Mode NetworkMode `json:"mode"`
+type WorkspaceResourcesSpec = WorkspaceResourcesInput
+
+// WorkspaceNetworkInput replaces the policy. DrainSeconds is only valid on SetNetwork.
+type WorkspaceNetworkInput struct {
+	Mode         NetworkMode           `json:"mode"`
+	Allow        []string              `json:"allow,omitempty"`
+	Deny         []string              `json:"deny,omitempty"`
+	Egresses     []NetworkEgressRule   `json:"egresses,omitempty"`
+	Resolvers    []NetworkResolverRule `json:"resolvers,omitempty"`
+	DrainSeconds *int                  `json:"drain_seconds,omitempty"`
 }
 
-// WorkspaceVolumeSpec specifies a volume to attach to a workspace.
-type WorkspaceVolumeSpec struct {
+type WorkspaceNetworkSpec = WorkspaceNetworkInput
+
+// WorkspaceVolumeInput specifies a volume binding.
+type WorkspaceVolumeInput struct {
 	ID                  string `json:"id"`
 	MountPath           string `json:"mount_path,omitempty"`
 	DeleteWithWorkspace bool   `json:"delete_with_workspace,omitempty"`
 }
+
+type WorkspaceVolumeSpec = WorkspaceVolumeInput
 
 // TimeoutSpec configures a workspace timeout duration and action.
 type TimeoutSpec struct {
@@ -132,9 +173,13 @@ type CreateWorkspaceParams struct {
 	Resources *WorkspaceResourcesSpec `json:"resources,omitempty"`
 	Network   *WorkspaceNetworkSpec   `json:"network,omitempty"`
 	Volume    *WorkspaceVolumeSpec    `json:"volume,omitempty"`
+	Volumes   []WorkspaceVolumeInput  `json:"volumes,omitempty"`
+	Packs     []string                `json:"packs,omitempty"`
 	Timeout   *TimeoutSpec            `json:"timeout,omitempty"`
 	Labels    map[string]string       `json:"labels,omitempty"`
 }
+
+type CreateWorkspaceRequest = CreateWorkspaceParams
 
 // WorkspaceListParams defines optional filters and pagination for GET /v1/workspaces.
 type WorkspaceListParams struct {
@@ -149,13 +194,16 @@ type WorkspaceListParams struct {
 // Use Some("new-name") to set Name, Null[string]() to clear Name, or leave Name unset to omit it.
 // In Labels, non-nil values set a label and nil values delete the label key.
 type UpdateWorkspaceParams struct {
-	Name   Nullable[string]
-	Labels map[string]*string
+	Name      Nullable[string]
+	Labels    map[string]*string
+	Resources *WorkspaceResourcesInput
 }
+
+type UpdateWorkspaceRequest = UpdateWorkspaceParams
 
 // MarshalJSON encodes only the fields explicitly configured in UpdateWorkspaceParams.
 func (p UpdateWorkspaceParams) MarshalJSON() ([]byte, error) {
-	body := make(map[string]any, 2)
+	body := make(map[string]any, 3)
 	if p.Name.Set {
 		if p.Name.Valid {
 			body["name"] = p.Name.Value
@@ -165,6 +213,9 @@ func (p UpdateWorkspaceParams) MarshalJSON() ([]byte, error) {
 	}
 	if p.Labels != nil {
 		body["labels"] = p.Labels
+	}
+	if p.Resources != nil {
+		body["resources"] = p.Resources
 	}
 	return json.Marshal(body)
 }
@@ -186,9 +237,7 @@ type SetWorkspaceTimeoutParams struct {
 }
 
 // SetWorkspaceNetworkParams defines parameters for PUT /v1/workspaces/{id}/network.
-type SetWorkspaceNetworkParams struct {
-	Mode NetworkMode `json:"mode"`
-}
+type SetWorkspaceNetworkParams = WorkspaceNetworkInput
 
 // AttachVolumeParams defines parameters for PUT /v1/workspaces/{id}/volume.
 type AttachVolumeParams struct {
@@ -354,7 +403,7 @@ func (s *WorkspacesService) SetTimeout(ctx context.Context, id string, params Se
 }
 
 // SetNetwork updates a workspace's outbound network policy (PUT /v1/workspaces/{id}/network).
-func (s *WorkspacesService) SetNetwork(ctx context.Context, id string, params SetWorkspaceNetworkParams, opts ...RequestOption) (*Workspace, error) {
+func (s *WorkspacesService) SetNetwork(ctx context.Context, id string, params WorkspaceNetworkInput, opts ...RequestOption) (*Workspace, error) {
 	if id == "" {
 		return nil, errors.New("kibotos: workspace id is required")
 	}
@@ -366,7 +415,9 @@ func (s *WorkspacesService) SetNetwork(ctx context.Context, id string, params Se
 	return &ws, nil
 }
 
-// AttachVolume attaches a volume to a workspace (PUT /v1/workspaces/{id}/volume).
+// AttachVolume replaces all existing attachments with this single volume
+// (PUT /v1/workspaces/{id}/volume). Use [WorkspacesService.SetVolumes] with the
+// full list of bindings to keep multiple volumes attached.
 func (s *WorkspacesService) AttachVolume(ctx context.Context, id string, params AttachVolumeParams, opts ...RequestOption) (*Workspace, error) {
 	if id == "" {
 		return nil, errors.New("kibotos: workspace id is required")
@@ -382,7 +433,9 @@ func (s *WorkspacesService) AttachVolume(ctx context.Context, id string, params 
 	return &ws, nil
 }
 
-// DetachVolume detaches the attached volume from a workspace (DELETE /v1/workspaces/{id}/volume).
+// DetachVolume detaches all volumes from a workspace (DELETE /v1/workspaces/{id}/volume).
+// Use [WorkspacesService.SetVolumes] with the bindings to keep to detach a single
+// volume from a workspace with multiple attachments.
 func (s *WorkspacesService) DetachVolume(ctx context.Context, id string, opts ...RequestOption) (*Workspace, error) {
 	if id == "" {
 		return nil, errors.New("kibotos: workspace id is required")

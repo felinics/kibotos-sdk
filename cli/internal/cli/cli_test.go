@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/felinics/kibotos-sdk/cli/internal/testhttp"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -81,8 +81,8 @@ func TestLoginDeviceFlowAndWhoami(t *testing.T) {
 	t.Parallel()
 
 	var pollCount atomic.Int32
-	var apiSrv *httptest.Server
-	apiSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var apiSrv *testhttp.Server
+	apiSrv = testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/zones":
 			if got := r.Header.Get("Authorization"); got != "Bearer kb_device_secret_1234567890abcd" {
@@ -101,7 +101,7 @@ func TestLoginDeviceFlowAndWhoami(t *testing.T) {
 	}))
 	defer apiSrv.Close()
 
-	consoleSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	consoleSrv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/auth/device/start":
 			var body map[string]string
@@ -137,7 +137,7 @@ func TestLoginDeviceFlowAndWhoami(t *testing.T) {
 	}))
 	defer consoleSrv.Close()
 
-	h := newTestHarness(t, apiSrv.Client())
+	h := newTestHarness(t, apiSrv.Client(consoleSrv))
 
 	code, stdout, stderr := h.run("login", "--console-url", consoleSrv.URL, "--device-name", "CI-Box", "--json")
 	if code != ExitOK {
@@ -192,7 +192,7 @@ func TestLoginAPIKeyAndProfilesAndLogout(t *testing.T) {
 	t.Parallel()
 
 	var zoneHits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/zones" {
 			zoneHits.Add(1)
 			if r.Header.Get("Authorization") == "Bearer kb_invalid_key_0000" {
@@ -303,7 +303,7 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 			Template:  kibotos.WorkspaceTemplate{ID: "python-3.12", Revision: "r42"},
 			Status:    status,
 			Resources: kibotos.WorkspaceResources{VCPUs: 2, MemoryMiB: 4096, DiskMiB: 20480},
-			Network:   kibotos.WorkspaceNetwork{Mode: netMode, Applied: netApplied},
+			Network:   kibotos.WorkspaceNetwork{Mode: netMode, Applied: kibotos.Ptr(netApplied)},
 			Volume:    &kibotos.WorkspaceVolume{ID: "vol_1", MountPath: "/data", DeleteWithWorkspace: false},
 			Timeout:   &kibotos.WorkspaceTimeout{ExpiresAt: now.Add(time.Hour), Action: kibotos.TimeoutActionStop},
 			Labels:    map[string]string{"env": "test"},
@@ -312,7 +312,7 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 		}
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workspaces":
 			var body kibotos.CreateWorkspaceParams
@@ -395,7 +395,7 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 			netPolls.Store(1)
 			writeJSON(w, http.StatusAccepted, makeWS(kibotos.WorkspaceStatusAvailable, kibotos.NetworkModeDenyAll, false))
 
-		case r.Method == http.MethodPut && r.URL.Path == "/v1/workspaces/wks_123/volume":
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/workspaces/wks_123/volumes":
 			writeJSON(w, http.StatusOK, makeWS(kibotos.WorkspaceStatusStopped, kibotos.NetworkModePublicInternet, true))
 
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/workspaces/wks_123/volume":
@@ -500,7 +500,7 @@ func TestWorkspaceCommandsEndToEnd(t *testing.T) {
 	netPolls.Store(0)
 
 	// Volume attach / detach.
-	code, _, stderr = h.run("ws", "volume", "attach", "wks_123", "--volume", "vol_1", "--mount-path", "/data", "--delete-with-workspace")
+	code, _, stderr = h.run("ws", "volume", "attach", "wks_123", "--volume", "vol_2", "--mount-path", "/cache", "--delete-with-workspace")
 	if code != ExitOK {
 		t.Fatalf("ws volume attach exit=%d stderr=%s", code, stderr)
 	}
@@ -554,7 +554,7 @@ func TestVolumeExposureTemplateZoneAndVersionCommands(t *testing.T) {
 		}
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/zones":
 			writeJSON(w, http.StatusOK, kibotos.Page[kibotos.Zone]{
@@ -716,7 +716,7 @@ func TestVolumeExposureTemplateZoneAndVersionCommands(t *testing.T) {
 func TestExitCodes(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testhttp.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/workspaces/wks_conflict":
 			writeAPIError(w, http.StatusConflict, "invalid_state", "workspace is stopped", false)

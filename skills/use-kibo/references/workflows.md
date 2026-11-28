@@ -1,6 +1,6 @@
-# Kibo Agent Workflows & Troubleshooting
+# Kibotos Agent Workflows & Troubleshooting
 
-Concrete end-to-end recipes for driving Kibo via `kibo`.
+Concrete end-to-end recipes for driving Kibotos via `kibo`.
 
 ## Workflow 1: Ephemeral Sandbox with HTTPS Preview
 
@@ -56,7 +56,7 @@ kibo workspace stop "$WS_ID" --json
 kibo volume resize "$VOL_ID" --size 100Gi --json
 
 # 4. Detach the volume before deleting it or moving it to another workspace
-kibo workspace volume detach "$WS_ID" --json
+kibo workspace volume detach "$WS_ID" "$VOL_ID" --json
 ```
 
 ## Workflow 3: Air-Gapped / Restricted Network Execution
@@ -102,7 +102,7 @@ kibo workspace list --profile prod --json
 | `template_unavailable_in_zone` (`400`) | Template is not replicated to the requested zone | Check `kibo template get <id> --json` `.zones` and pick a supported zone |
 | `invalid_state` (`409`) | Operation requires another status (e.g. attach/detach volume while `available`) | Check `kibo workspace get <id> --json`, stop or start with `--wait` first |
 | `operation_in_progress` (`409`, retryable) | Workspace/volume is mid-transition | Wait for current transition (`kibo workspace wait <id> --status available,stopped,failed`) then retry |
-| `volume_attached` (`409`) | Deleting a volume still bound (`workspace_id != null`) to a workspace | Stop the workspace, run `kibo workspace volume detach <ws_id>`, then delete the volume |
+| `volume_attached` (`409`) | Deleting a volume still bound (`workspace_id != null`) to a workspace | Stop the workspace, run `kibo workspace volume detach <ws_id> <vol_id>`, then delete the volume |
 | `wait_timeout` (`408`, retryable) | Operation took longer than wait window | Inspect current state with `get` and re-run `kibo workspace wait` / `kibo volume wait` with a larger `--timeout` |
 | `unexpected_status` (`409`) | Resource transitioned to `failed` (or `lost` for volumes) during `--wait` | Run `kibo workspace get <id> --json` (or `volume get`) and inspect `.status`, `.failure.code`, and `.failure.message` |
 | Non-empty `unavailable_zones` in list | One or more zones were temporarily unreachable during fan-out | Inform the user which zones were unavailable; retry or query a specific `--zone` |
