@@ -1,6 +1,6 @@
 ---
 name: use-kibo
-description: Drive the official `kibo` CLI for Kibotos — fast, lightweight cloud microVM workspaces built for AI agents. Use whenever creating, inspecting, starting, stopping, networking, timing out, or deleting Kibotos workspaces, managing persistent Kibotos volumes, exposing workspace ports over temporary HTTPS URLs, checking Kibotos zones, templates or Packs, running workspace commands, transferring files, forwarding ports, managing egresses or resolvers, or diagnosing `kibo` authentication and profiles.
+description: Drive the official `kibo` CLI for Kibotos — fast, lightweight cloud microVM workspaces built for AI agents. Use whenever creating, inspecting, starting, stopping, networking, timing out, or deleting Kibotos workspaces, enabling remote desktop, managing persistent Kibotos volumes, exposing workspace ports over temporary HTTPS URLs, checking Kibotos zones, templates or Packs, running workspace commands, transferring files, forwarding ports, managing egresses or resolvers, or diagnosing `kibo` authentication and profiles.
 ---
 
 # `use-kibo` — Operating Kibotos via the `kibo` CLI
@@ -32,7 +32,7 @@ Follow these rules on every `kibo` invocation:
    - Missing inputs return exit 2 before authentication. For egresses and resolvers, use canonical IDs or unique names and resolve an `ambiguous_name` error with one of the candidate IDs.
    - In `--json` mode, `stdout` carries JSON and interactive prompts are disabled. `exec --stream --json` emits one JSON event per line. Plain `files get` streams file bytes to stdout. Use a local destination to get metadata in JSON mode.
    - Progress updates, interactive login URLs/codes, multi-zone warnings, and structured error envelopes (`{"error": {...}}`) are always written to `stderr`.
-   - For simple shell capture where you only need the resource ID, `-q` (`--quiet`) prints bare IDs to `stdout`.
+   - For shell capture, `-q` (`--quiet`) prints bare IDs for resource commands and the bare URL for `desktop`.
 2. **Async lifecycle commands wait by default (`--no-wait` for parallel fan-out)**:
    - Creation, start, stop, deletion, live network changes, and volume creation/resize/deletion **wait until completion by default** (`--wait-timeout` defaults to `5m` / `300s`).
    - Pass `--no-wait` only when you intentionally want to trigger multiple operations in parallel and wait on them afterwards.
@@ -70,6 +70,16 @@ kibo workspace create \
   --label purpose=agent-run \
   --json
 ```
+
+### Enable a Browser Desktop
+
+```bash
+kibo ws create -t debian --desktop --no-input --json
+kibo desktop wks_... --start --restart --no-input --json
+kibo desktop wks_... --no-input -q
+```
+
+`desktop` (also `ws desktop`) looks up the `desktop.v1` Pack and attaches it if missing. Use `--start` or `--restart` when the user wants the corresponding lifecycle action. A restart applies the Pack to a running workspace when it was just attached. Inspect `status` and `restart_required` before using `url`. Use `--open` when the user wants to launch a local browser.
 
 ### Expose a Service Port over Temporary HTTPS
 

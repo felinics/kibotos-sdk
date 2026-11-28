@@ -1,6 +1,6 @@
 ---
 title: Exec, Files, and Tunnels
-description: Run commands, move files, and forward local connections to Kibotos workspaces with kibo.
+description: Run commands, move files, forward local connections, and open the browser desktop on Kibotos workspaces with kibo.
 ---
 
 These commands work on available workspaces. If you omit the workspace in an interactive terminal, `kibo` opens a picker. Supply a workspace ID or unique name for automation.
@@ -58,3 +58,12 @@ kibo tunnel wks_123 --unix-path /run/app.sock --listen 127.0.0.1:18081 --no-inpu
 ```
 
 Use a positional port or `--remote` for guest loopback TCP. Use `--unix-path` for a guest Unix socket. Each local connection opens an authenticated WebSocket. The tunnel stays open until cancelled. Startup prints `Listening on <addr>`, writes the address alone with `-q`, or emits `{"workspace_id":"...","listen":"..."}` with `--json`.
+
+## Open the browser desktop
+
+```bash
+kibo desktop devbox --open
+kibo desktop wks_123 --no-input -q
+```
+
+`kibo desktop` returns a direct, full-window Dashboard URL. It attaches the Desktop Pack when needed. See the workspace guide for enabling Desktop at creation and activating the Pack on an existing workspace. [Remote desktop](workspaces#remote-desktop)

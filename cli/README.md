@@ -46,7 +46,7 @@ Profiles are stored in `~/.config/kibo/config.json` (mode `0600`). Override the 
 
 Resolution precedence (highest to lowest):
 
-1. Flags: `--api-key`, `--api-url`, `--profile`
+1. Flags: `--api-key`, `--api-url`, `--profile`, and `--console-url` on commands that accept it
 2. Environment variables:
    - API key: `KIBOTOS_API_KEY` > `KIBO_API_KEY`
    - API URL: `KIBOTOS_API_URL` > `KIBO_API_URL`
@@ -83,6 +83,23 @@ kibo ws start devbox
 kibo ws delete devbox
 ```
 
+## Remote desktop
+
+```bash
+kibo ws create -t debian -n desktop-dev --desktop --open
+kibo desktop desktop-dev --open
+```
+
+`kibo desktop` opens a workspace picker in a terminal. It attaches the `desktop.v1` Pack if needed and offers to start a stopped workspace or restart a running workspace when it has just attached the Pack. For automation, pass the workspace and use `--start` or `--restart` to authorize that lifecycle step.
+
+```bash
+kibo ws create -t debian --desktop --no-input --json
+kibo ws desktop wks_123 --start --restart --no-input --json
+kibo desktop wks_123 --no-input -q
+```
+
+`ws create` prints the workspace ID in quiet mode and includes the Desktop URL in human output. `desktop` prints only the URL with `-q` and includes it in the `url` field with `--json`. [Desktop flags and activation](docs/workspaces.mdx#remote-desktop)
+
 ## Guided commands
 
 Use these short forms in a terminal. Supply any known target or value to skip its prompt.
@@ -92,6 +109,7 @@ Use these short forms in a terminal. Supply any known target or value to skip it
 | `kibo exec` / `kibo exec -- uname -a` / `kibo exec -it` | Pick an available workspace. Enter a shell command when no argv or PTY is requested. `-it` opens a login shell |
 | `kibo files ls` / `stat` / `get` / `put` / `mkdir` / `mv` / `rm` | Pick an available workspace. Supply only missing required paths. `ls` defaults to `.`, `get` defaults to stdout, and `rm` confirms deletion |
 | `kibo tunnel` | Pick an available workspace and enter a guest TCP port. Enter accepts `8080` |
+| `kibo desktop` | Pick a workspace and confirm a start or a restart if needed to activate the Desktop Pack |
 | `kibo pack get` | Pick a Pack by ID |
 | `kibo egress create` / `get` / `update` / `delete` | Create from a SOCKS5 address and optional name. For other actions, pick the egress. Flagless updates prompt for a name and deletion asks for confirmation |
 | `kibo resolver create` / `get` / `update` / `delete` | Create with a protocol, upstream, and optional name. For other actions, pick the resolver. Flagless updates prompt for a name and deletion asks for confirmation |
@@ -163,7 +181,7 @@ Both networking resources support `list`, `get`, `create`, `update`, and `delete
 - **Scripting & AI Agents (Non-Interactive)**:
   - Automatically enters non-interactive mode when stdin or stderr is a pipe, `TERM=dumb`, or prompts are disabled by `--json`, `-q`, `--no-input`, `CI=true`, or `KIBO_NO_INPUT=1`. Explicit stdin transfers still read their input.
   - Pass `--json` (or `-o json`, or set `KIBO_OUTPUT=json`) for JSON on `stdout` and structured JSON errors (with actionable `hint` / `details.missing_flags`) on `stderr`.
-  - Pass `-q` / `--quiet` to print only resource IDs to `stdout` (ideal for `WS=$(kibo ws create -t python-3.12 -q)`).
+  - Pass `-q` / `--quiet` for bare output on `stdout`, such as a workspace ID from `ws create` or a URL from `desktop`.
   - Missing required input returns exit 2 with a hint before authentication.
   - Exit codes:
     - `0`: Success

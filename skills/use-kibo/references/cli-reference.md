@@ -8,7 +8,7 @@ Available on every `kibo` command:
 | --- | --- | --- |
 | `--json` | `false` | Write strictly valid JSON to `stdout` (shorthand for `-o json`) and disable interactive prompts |
 | `-o, --output <format>` | `table` | Output format: `table` or `json` (env: `KIBO_OUTPUT` / `KIBOTOS_OUTPUT`) |
-| `-q, --quiet` | `false` | Print only resource IDs to `stdout` and suppress progress messages |
+| `-q, --quiet` | `false` | Print bare output such as resource IDs or a Desktop URL and suppress progress messages |
 | `--no-input` | `false` | Disable interactive prompts and fail fast on missing inputs (env: `KIBO_NO_INPUT` / `KIBOTOS_NO_INPUT` / `CI`) |
 | `-y, --yes` | `false` | Skip interactive `[y/N]` confirmation prompts for destructive actions |
 | `--no-color` | `false` | Disable colored output (also respects `NO_COLOR`) |
@@ -18,7 +18,7 @@ Available on every `kibo` command:
 | `--api-url <url>` | `https://api.kibo.to/v1` | Override Kibotos v1 API base URL |
 
 Use `--no-input --json` with explicit IDs and required values for automation. Use
-`-q` for bare IDs. Essential missing inputs open guided prompts in a terminal.
+`-q` for bare values such as IDs and Desktop URLs. Essential missing inputs open guided prompts in a terminal.
 JSON output, quiet mode, `--no-input`, `TERM=dumb`, truthy `CI` or no-input
 environment variables, and non-terminal stdin or stderr disable prompts.
 Missing required inputs fail before authentication with exit 2 and a hint.
@@ -147,6 +147,9 @@ All workspace commands accepting `[id-or-name]` accept either a `wks_...` ID or 
   - `--network <mode>`: `public_internet` or `deny_all`
   - `--volume <vol_id:/path>` binds an existing volume at creation. Repeat it for each mount or pass one legacy volume ID or name with `--mount-path`.
   - `--pack <pack_id>` binds a Pack at creation. Pass up to four unique IDs.
+  - `--desktop` attaches a Pack that provides `desktop.v1`, counts it toward the four-Pack limit, and shows the Desktop URL in human output.
+  - `--open` launches the desktop when the workspace is available and requires `--desktop`.
+  - `--console-url <url>` overrides the HTTP or HTTPS base for desktop links. JSON and quiet mode produce the workspace object and workspace ID, respectively.
   - `--mount-path <path>`: Mount path for `--volume` (e.g. `/data`)
   - `--delete-volume`: Delete the attached volume when the workspace is deleted (requires `--volume`)
   - `--timeout <dur>`: Auto-timeout duration (`1h`, `30m`, `3600`; bare integer is seconds)
@@ -172,6 +175,14 @@ All workspace commands accepting `[id-or-name]` accept either a `wks_...` ID or 
 - `kibo workspace metrics [id-or-name] [--start <RFC3339>] [--end <RFC3339>]` reads host and guest time series. If both bounds are given, start must precede end. Only the workspace is prompted.
 - `kibo workspace wait [id-or-name] -s|--status <s1,s2> [--timeout <dur>]`
   - `--status` accepts comma-separated values or repeated flags (default `--timeout`: `30s`).
+
+### `kibo desktop [workspace]` (also `kibo ws desktop`)
+
+- Choose a workspace in a terminal or pass an ID or unique name. Attaches a Pack that provides `desktop.v1` if needed, preserving existing Pack bindings.
+- `--start` starts a stopped workspace. `--restart` restarts an available workspace when the command just attached the Pack. In a terminal, the command offers the applicable action if its flag is omitted.
+- `--wait` is enabled by default, with `--wait-timeout` set to `5m`. `--no-wait` skips waiting for the workspace to become available. A restart always waits for the stop before sending the start request.
+- `--open` launches the browser when the workspace is available and any required restart has been performed. `--console-url <url>` overrides the HTTP or HTTPS base. The link includes `?org=<id>` when the CLI has an organization ID.
+- `--json` returns `workspace_id`, `status`, `desktop_enabled`, `pack_id`, `restart_required`, and `url`. `-q` prints the URL alone. When `restart_required` is true, stop and start the workspace to apply the Pack.
 
 ## Execution, file transfers, and tunnels
 

@@ -1,6 +1,6 @@
 ---
 title: Workspaces
-description: Create, list, inspect, update, start, stop, resize, inspect metrics, and configure volume, Pack, and network bindings for Kibotos workspaces.
+description: Create and manage Kibotos workspaces, open remote desktop, inspect metrics, and configure volume, Pack, and network bindings.
 ---
 
 Manage microVM workspaces using `kibo workspace` (aliases: `ws`, `workspaces`).
@@ -35,6 +35,9 @@ kibo workspace create \
 | `--network <mode>` | No | `public_internet` | Outbound network mode: `public_internet` or `deny_all`. |
 | `--volume <vol_id:/path>` | No | — | Repeat for multiple bindings. A single legacy volume ID or name can be paired with `--mount-path`. |
 | `--pack <pack_id>` | No | — | Bind a Pack. Repeat for up to four unique IDs. |
+| `--desktop` | No | `false` | Attach a Pack that provides `desktop.v1` and show the Desktop URL in human output. The Pack counts toward the four-Pack limit. |
+| `--open` | No | `false` | Open the Desktop URL when the new workspace is available. Requires `--desktop`. |
+| `--console-url <url>` | No | resolved console URL | Override the HTTP or HTTPS base URL for the Desktop link. |
 | `--mount-path <path>` | No | — | Mount path inside the workspace (e.g. `/data`; requires `--volume`). |
 | `--delete-volume` | No | `false` | Delete the attached volume when this workspace is deleted (requires `--volume`). |
 | `--timeout <dur>` | No | — | Auto-timeout duration (`1h`, `30m`, `3600`; bare integer is seconds). |
@@ -43,6 +46,24 @@ kibo workspace create \
 | `--wait` | No | `true` | Block until workspace status reaches `available` (default `true`). |
 | `--no-wait` | No | `false` | Return immediately without waiting for completion. |
 | `--wait-timeout <dur>` | No | `5m` (`300s`) | Maximum duration to wait. |
+
+## Remote desktop
+
+```bash
+kibo ws create -t debian -n desktop-dev --desktop --open
+kibo desktop                        # Pick a workspace
+kibo desktop desktop-dev --open     # Use a workspace name or ID
+kibo ws desktop wks_123 --start --restart --no-input --json
+kibo desktop wks_123 --no-input -q
+```
+
+`kibo desktop` and `kibo ws desktop` attach a Pack that provides `desktop.v1` when the workspace needs one. The Pack takes effect on the next start. In a terminal, the command offers to start a stopped workspace or restart an available workspace that needs the Pack. In automation, use `--start` for a stopped workspace and `--restart` to activate a newly attached Pack on a running workspace. If you defer a restart, stop and start the workspace when ready.
+
+Desktop waits for a requested start or restart to reach `available` by default. Use `--wait-timeout` to set the wait limit. With `--no-wait`, a restart still waits for the stop before sending the start request. `--open` launches the browser once the command has an available workspace and any required restart has been performed.
+
+The browser URL uses `<console-url>/desktop/<workspace-id>` and includes `?org=<organization-id>` when the organization is known from the active profile or an override. The console base resolves from `--console-url`, `KIBOTOS_CONSOLE_URL`, `KIBO_CONSOLE_URL`, the profile's `console_url`, or the default `https://console.kibo.to`, in that order.
+
+`kibo desktop --json` returns `workspace_id`, `status`, `desktop_enabled`, `pack_id`, `restart_required`, and `url`. When it attaches the Pack to an available workspace and leaves it running, `restart_required` is `true`. Quiet mode prints just the URL. For `ws create --desktop`, JSON returns the workspace object and quiet mode prints the workspace ID.
 
 ## List and Inspect Workspaces
 

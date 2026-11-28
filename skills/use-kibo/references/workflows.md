@@ -135,6 +135,23 @@ kibo ws network "$WS_ID" --mode public_internet \
   --egress "$EGRESS_ID=10.0.0.0/8" --resolver "$RESOLVER_ID=$EGRESS_ID" --no-input --json
 ```
 
+## Workflow 8. Open a Kibotos workspace in the browser
+
+For a new workspace, create it with the Desktop Pack and use its ID to get the Dashboard URL.
+
+```bash
+WS_ID=$(kibo ws create -t debian --desktop --no-input -q)
+DESKTOP_URL=$(kibo desktop "$WS_ID" --no-input -q)
+```
+
+For an existing workspace, request a start or restart if the user wants Desktop activated now.
+
+```bash
+kibo desktop "$WS_ID" --start --restart --no-input --json
+```
+
+Use the `url` field when the workspace is available and `restart_required` is false. If the command attached the Pack while the workspace was running and you deferred the restart, stop and start the workspace when ready. For direct browser launch from a terminal, use `kibo desktop "$WS_ID" --open`.
+
 ## Troubleshooting & Recovery
 
 | Symptom / Error | Cause | Fix |

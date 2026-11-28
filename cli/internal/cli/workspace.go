@@ -25,6 +25,7 @@ func (a *App) newWorkspaceCmd() *cobra.Command {
 		a.newWorkspaceListCmd(),
 		a.newWorkspaceGetCmd(),
 		a.newWorkspaceCreateCmd(),
+		a.newDesktopCmd(),
 		a.newWorkspaceUpdateCmd(),
 		a.newWorkspaceDeleteCmd(),
 		a.newWorkspaceStartCmd(),
@@ -189,6 +190,9 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 		networkMode   string
 		volumeRefs    []string
 		packIDs       []string
+		enableDesktop bool
+		openDesktop   bool
+		consoleURL    string
 		mountPath     string
 		deleteVolume  bool
 		timeoutRaw    string
@@ -202,9 +206,17 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a new workspace",
-		Args:  cobra.NoArgs,
+		Example: `  kibo ws create
+  kibo ws create -t debian --desktop --no-input --json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			if openDesktop && !enableDesktop {
+				return usageError("--open requires --desktop")
+			}
+			if err := validateDesktopConsoleURL(cmd, consoleURL); err != nil {
+				return err
+			}
 			if err := validateNonEmptyFlag(cmd, "template", templateID); err != nil {
 				return err
 			}
@@ -296,7 +308,7 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 				return missingFlagError("--template", "Pass --template <id>. Run `kibo template list --json` to see available templates.")
 			}
 
-			client, _, err := a.requireClient()
+			client, res, err := a.requireClient()
 			if err != nil {
 				return err
 			}
@@ -319,6 +331,19 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 						return err
 					}
 					name = enteredName
+				}
+			}
+
+			if enableDesktop {
+				packID, err := resolveDesktopPackID(ctx, client, strings.TrimSpace(zone))
+				if err != nil {
+					return err
+				}
+				if !slices.Contains(packIDs, packID) {
+					packIDs = append(packIDs, packID)
+				}
+				if err := validatePacks(packIDs); err != nil {
+					return err
 				}
 			}
 
@@ -398,6 +423,17 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 			if err := a.renderWorkspace(ws); err != nil {
 				return err
 			}
+			if enableDesktop || hasDesktopCapability(ws) {
+				desktopURL := buildDesktopURL(resolveConsoleURL(consoleURL, res), ws.ID, res.OrganizationID)
+				if !p.IsJSON() && !p.IsQuiet() {
+					if _, err := fmt.Fprintf(p.Out, "Desktop URL: %s\n", desktopURL); err != nil {
+						return err
+					}
+				}
+				if openDesktop && ws.Status == kibotos.WorkspaceStatusAvailable {
+					a.openDesktopURL(p, desktopURL)
+				}
+			}
 			if ws.Status == kibotos.WorkspaceStatusAvailable {
 				p.Hintf("Expose a port with: kibo exp create %s -p 8080", ws.ID)
 			}
@@ -416,6 +452,9 @@ func (a *App) newWorkspaceCreateCmd() *cobra.Command {
 	f.StringVar(&networkMode, "network", "", "Outbound network mode: public_internet or deny_all")
 	f.StringArrayVar(&volumeRefs, "volume", nil, "Volume ID and mount as vol_id:/path (repeatable), or one volume ID or name")
 	f.StringArrayVar(&packIDs, "pack", nil, "Pack ID (repeatable, at most four)")
+	f.BoolVar(&enableDesktop, "desktop", false, "Enable remote desktop (attaches the desktop.v1 Pack) and show the browser desktop URL")
+	f.BoolVar(&openDesktop, "open", false, "Open the browser desktop URL after creation (requires --desktop)")
+	f.StringVar(&consoleURL, "console-url", "", "Override Kibotos console URL used for desktop links")
 	f.StringVar(&mountPath, "mount-path", "", "Mount path for the attached volume (e.g. /data)")
 	f.BoolVar(&deleteVolume, "delete-volume", false, "Delete the attached volume when this workspace is deleted")
 	f.StringVar(&timeoutRaw, "timeout", "", "Auto-timeout duration (e.g. 1h, 30m, 3600; bare integer is seconds)")

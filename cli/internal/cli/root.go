@@ -103,7 +103,7 @@ func NewRootCommand(opts Options) *cobra.Command {
 	pf := root.PersistentFlags()
 	pf.BoolVar(&app.flagJSON, "json", false, "Output valid JSON to stdout (shorthand for -o json)")
 	pf.StringVarP(&app.flagOutput, "output", "o", "", "Output format: table or json (env: KIBO_OUTPUT)")
-	pf.BoolVarP(&app.flagQuiet, "quiet", "q", false, "Only output resource IDs to stdout and suppress progress messages")
+	pf.BoolVarP(&app.flagQuiet, "quiet", "q", false, "Output only the primary value (such as an ID or URL) and suppress progress messages")
 	pf.BoolVar(&app.flagNoInput, "no-input", false, "Disable interactive prompts and fail fast on missing inputs (env: KIBO_NO_INPUT)")
 	pf.BoolVarP(&app.flagYes, "yes", "y", false, "Skip interactive confirmation prompts")
 	pf.BoolVar(&app.flagNoColor, "no-color", false, "Disable colored output (env: NO_COLOR)")
@@ -121,6 +121,7 @@ func NewRootCommand(opts Options) *cobra.Command {
 		app.newZoneCmd(),
 		app.newTemplateCmd(),
 		app.newWorkspaceCmd(),
+		app.newDesktopCmd(),
 		app.newVolumeCmd(),
 		app.newExposureCmd(),
 		app.newExecCmd(),
