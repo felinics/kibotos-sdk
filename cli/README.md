@@ -71,13 +71,15 @@ kibo exec
 kibo ws create -t python-3.12 -n devbox --memory 4Gi --timeout 1h
 
 # Expose port 8080 over a temporary HTTPS URL (supports workspace names as well as IDs)
-kibo exp create devbox 8080 --ttl 1h
+kibo open devbox 8080 --ttl 1h
 
-# Create a 50 GiB persistent volume and attach it to a stopped workspace
+# Create a persistent volume and attach it, restarting devbox if needed
 kibo vol create -s 50Gi -n datasets
-kibo ws stop devbox
-kibo ws volume attach devbox vol_... --mount /data
-kibo ws start devbox
+kibo ws volume attach devbox datasets --mount /data --restart
+
+# Open a login shell or copy a file into the workspace
+kibo shell devbox
+kibo cp ./report.txt devbox:/tmp/
 
 # Clean up (prompts for confirmation in interactive TTY; pass -y to skip)
 kibo ws delete devbox
@@ -108,23 +110,31 @@ Use these short forms in a terminal. Supply any known target or value to skip it
 | --- | --- |
 | `kibo exec` / `kibo exec -- uname -a` / `kibo exec -it` | Pick an available workspace. Enter a shell command when no argv or PTY is requested. `-it` opens a login shell |
 | `kibo files ls` / `stat` / `get` / `put` / `mkdir` / `mv` / `rm` | Pick an available workspace. Supply only missing required paths. `ls` defaults to `.`, `get` defaults to stdout, and `rm` confirms deletion |
+| `kibo shell` | Pick a running or stopped workspace and open a login shell. A start of a stopped workspace requires confirmation or `--start` |
+| `kibo open` | Pick an available workspace, enter a port (default `8080`), and open its temporary HTTPS URL |
 | `kibo tunnel` | Pick an available workspace and enter a guest TCP port. Enter accepts `8080` |
 | `kibo desktop` | Pick a workspace and confirm a start or a restart if needed to activate the Desktop Pack |
 | `kibo pack get` | Pick a Pack by ID |
 | `kibo egress create` / `get` / `update` / `delete` | Create from a SOCKS5 address and optional name. For other actions, pick the egress. Flagless updates prompt for a name and deletion asks for confirmation |
 | `kibo resolver create` / `get` / `update` / `delete` | Create with a protocol, upstream, and optional name. For other actions, pick the resolver. Flagless updates prompt for a name and deletion asks for confirmation |
-| `kibo ws resize` | Pick a stopped or failed workspace. Enter resource changes or keep current values |
+| `kibo ws resize` | Pick a running, stopped, or failed workspace. Enter resource changes or keep current values |
 | `kibo ws volumes set` / `kibo ws volume attach` / `kibo ws volume detach` | Pick an eligible workspace. Clearing bindings asks for confirmation. Attach offers same-zone available volumes and asks for a mount path when required |
-| `kibo ws packs set` / `kibo ws metrics` | Pick a workspace. With `packs set`, enter the ordered Pack IDs. Metrics uses the default interval |
+| `kibo ws pack add` / `remove` / `set` | Pick a workspace and a Pack or enter the ordered list for `set` |
+| `kibo ws restart` | Pick a running workspace to stop and start again |
 
 ## Explicit commands for scripts and agents
 
-Send everything required as arguments and flags. Prefer canonical IDs for stable references.
+Send everything required as arguments and flags. Prefer canonical IDs for stable references. Use `kibo --version`, `kibo -v --json`, or `kibo version -q` to check the binary version.
+
+Resize, volume changes, and Pack updates on a running workspace offer one `[Y/n]` restart confirmation in a terminal. Declining cancels the change. In non-interactive mode, pass `--restart` to allow a restart and `--start` to allow a stopped workspace to start for `shell`. Without these flags, running resize and volume mutations rely on the API state check and Pack changes apply at the next start.
 
 ```bash
 kibo exec wks_123 --no-input --json --workdir /app --env MODE=test --timeout 60 -- python3 main.py
 printf 'hello' | kibo exec wks_123 --no-input --json --stdin - -- cat
 
+kibo cp ./main.py wks_123:/app/ --create-only --no-input --json
+kibo cp wks_123:/app/output.log ./output.log --no-input --json
+kibo open wks_123 8080 --no-input -q
 kibo files ls wks_123 /app --depth 2 --no-input --json
 kibo files stat wks_123 /app/main.py --no-input --json
 kibo files get wks_123 /app/main.py ./main.py --no-input --json
@@ -142,12 +152,15 @@ kibo tunnel wks_123 --unix-path /run/app.sock --listen 127.0.0.1:18081 --no-inpu
 ```bash
 kibo pack list --zone global-1 --no-input --json
 kibo pack get node-22 --revision r42 --no-input --json
-kibo ws resize wks_123 --vcpus 4 --memory-mib 8192 --disk-mib 40960 --no-input --json
+kibo ws resize wks_123 --vcpus 4 --memory-mib 8192 --disk-mib 40960 --restart --no-input --json
+kibo ws restart wks_123 --timeout 1h --wait-timeout 3m --no-input --json
 kibo ws metrics wks_123 --start 2026-11-16T10:00:00Z --end 2026-11-16T11:00:00Z --no-input --json
 kibo ws volume attach wks_123 vol_1 --mount /data --no-input --json
 kibo ws volume detach wks_123 vol_1 --no-input --json
 kibo ws volumes set wks_123 vol_1:/data vol_2:/cache --no-input --json
 kibo ws packs set wks_123 node-22 kibotos-desktop-env --no-input --json
+kibo ws pack add wks_123 python-3.12 --restart --no-input --json
+kibo ws pack remove wks_123 node-22 --no-input --json
 ```
 
 Resources can be resized while a workspace is stopped or failed. The root disk can only grow. Pack changes take effect on the next start. In scripts, passing only the workspace to `volumes set` or `packs set` clears the corresponding list. [Workspace configuration](docs/workspaces.mdx)
@@ -164,11 +177,15 @@ kibo resolver get rsv_123 --no-input --json
 kibo resolver update rsv_123 --protocol https --url https://dns.example/dns-query --no-input --json
 kibo ws network wks_123 --mode public_internet \
   --egress egr_123=10.0.0.0/8 --resolver rsv_123=egr_123 --no-input --json
+kibo ws network allow wks_123 203.0.113.0/24 --no-input --json
+kibo ws network deny wks_123 198.51.100.2 --remove --no-input --json
+kibo ws network use-egress wks_123 egr_123 10.0.0.0/8 --no-input --json
+kibo ws network use-resolver wks_123 rsv_123 --via-egress --no-input --json
 ```
 
 After removing references from workspace policies, delete the resources with `kibo egress delete egr_123 --no-input --json` and `kibo resolver delete rsv_123 --no-input --json`.
 
-Both networking resources support `list`, `get`, `create`, `update`, and `delete`. Updates accept metadata flags or a complete replacement configuration. Workspace network policy updates replace the whole policy. [Packs and networking](docs/packs-and-networking.mdx)
+Both networking resources support `list`, `get`, `create`, `update`, and `delete`. Updates accept metadata flags or a complete replacement configuration. Use the `--mode` form to replace the whole workspace policy. The network subcommands edit one field while retaining the rest. [Packs and networking](docs/packs-and-networking.mdx)
 
 ## Ergonomics: Interactive vs. Scripting / AI Agents
 

@@ -5,6 +5,16 @@ description: Run commands, move files, forward local connections, and open the b
 
 These commands work on available workspaces. If you omit the workspace in an interactive terminal, `kibo` opens a picker. Supply a workspace ID or unique name for automation.
 
+## Open a login shell
+
+```bash
+kibo shell
+kibo shell devbox --workdir /app --user app --env MODE=dev
+kibo shell wks_123 --start --wait-timeout 2m --no-input
+```
+
+`kibo shell` picks a running or stopped workspace, showing running workspaces first. It opens a Bash login shell when Bash is installed and falls back to `sh`. On a stopped workspace, a terminal offers to start it and wait for availability. With `--no-input`, pass `--start` to allow that transition. Shell sessions require Unix terminal stdin and terminal output mode.
+
 ## Run a command
 
 ```bash
@@ -47,6 +57,16 @@ kibo files mv wks_123 /app/output.log /app/archive/output.log --no-input --json
 kibo files rm wks_123 /app/archive/output.log --no-input --json
 ```
 
+## Copy a file with `kibo cp`
+
+```bash
+kibo cp ./report.txt devbox:/data/
+kibo cp wks_123:/data/report.txt ./reports/ --no-input --json
+kibo cp wks_123:/data/report.txt - --no-input
+```
+
+Specify one local path and one `workspace:path` operand. Uploads to `.` or a path ending in `/` keep the local filename and have a 1 GiB limit. Downloads into an existing directory or a path ending in `/` keep the remote filename. A destination of `-` streams raw bytes to stdout. Use a local destination with `--json` for download metadata. Both directions accept `--user`. Uploads also accept `--mode` and `--create-only`.
+
 ## Forward a local port
 
 Run `kibo tunnel` to choose an available workspace and enter a guest TCP port. Enter accepts `8080`. The default local listener is `127.0.0.1:18080`.
@@ -58,6 +78,17 @@ kibo tunnel wks_123 --unix-path /run/app.sock --listen 127.0.0.1:18081 --no-inpu
 ```
 
 Use a positional port or `--remote` for guest loopback TCP. Use `--unix-path` for a guest Unix socket. Each local connection opens an authenticated WebSocket. The tunnel stays open until cancelled. Startup prints `Listening on <addr>`, writes the address alone with `-q`, or emits `{"workspace_id":"...","listen":"..."}` with `--json`.
+
+## Open a temporary HTTPS URL
+
+```bash
+kibo open
+kibo open devbox 8080 --ttl 30m
+kibo open wks_123 8080 --no-input --no-open
+kibo open wks_123 8080 --no-input -q
+```
+
+`kibo open` picks an available workspace and defaults the prompted port to `8080`. It reuses an active exposure for that port or creates one if needed. `--ttl` sets the lifetime of a new exposure. Human output prints the URL and opens the browser unless you pass `--no-open`. `-q` prints the bare URL and `--json` returns the exposure object. Both skip browser launch.
 
 ## Open the browser desktop
 

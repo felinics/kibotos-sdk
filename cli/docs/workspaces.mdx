@@ -7,7 +7,7 @@ Manage microVM workspaces using `kibo workspace` (aliases: `ws`, `workspaces`).
 
 ## Create a Workspace
 
-Run `kibo ws create` with no flags in an interactive terminal to choose a template and optionally name the workspace. Supply flags for resource overrides and other settings. Async lifecycle commands (`create`, `start`, `stop`, `delete`, `network`) **wait until completion by default** (pass `--no-wait` to return immediately):
+Run `kibo ws create` with no flags in an interactive terminal to choose a template and optionally name the workspace. Supply flags for resource overrides and other settings. Async lifecycle commands (`create`, `start`, `stop`, `restart`, `delete`, `network`) **wait until completion by default** (pass `--no-wait` to return immediately):
 
 ```bash
 kibo workspace create \
@@ -97,7 +97,7 @@ kibo ws update wks_01j9... \
 kibo ws update wks_01j9... --clear-name
 ```
 
-## Start, Stop, and Delete
+## Start, stop, restart, and delete
 
 All lifecycle commands accept a workspace ID or unique name (or prompt interactively in a TTY if omitted) and **wait by default** (pass `--no-wait` to return immediately, or `--wait-timeout <dur>` to override the `5m` wait window):
 
@@ -111,9 +111,20 @@ kibo ws stop agent-sandbox --force -y
 # Start a stopped workspace with a fresh 2-hour auto-stop timeout
 kibo ws start agent-sandbox --timeout 2h --timeout-action stop
 
+# Restart with a new timeout for the start
+kibo ws restart agent-sandbox --timeout 2h --timeout-action stop --no-input --json
+
 # Delete and wait until removed (returns status "deleted" when complete)
 kibo ws delete agent-sandbox -y
 ```
+
+A restart always waits until the workspace is stopped. Use `--no-wait` to skip the final wait for `available`. `--force` powers off immediately and asks for confirmation in a terminal unless you pass `-y`.
+
+## Apply configuration changes on a running workspace
+
+Resize and volume changes require an offline workspace. On a running workspace, the terminal asks once before stopping, applying the change, starting again, and waiting for availability. Pack changes can be saved while running and take effect on the next start. The terminal asks once before saving and restarting. The default answer is yes, and declining cancels before any change.
+
+For scripts, pass `--restart` to opt in explicitly. Without it, these commands leave the power state alone. The API rejects running resize and volume changes with `invalid_state`, and the next start activates saved Pack changes. `--wait-timeout` sets the limit for each transition and defaults to five minutes. If an offline mutation fails after stopping the workspace, the command returns the API error and leaves the workspace stopped.
 
 ## Update Timeout Policy
 
@@ -132,26 +143,25 @@ kibo ws network agent-sandbox --mode deny_all
 kibo ws network agent-sandbox --mode public_internet
 ```
 
-Each policy update replaces the whole policy. For allow and deny lists, SOCKS5 routing, and custom DNS, see [Packs and networking](packs-and-networking).
+The `--mode` command replaces the policy. Use the network subcommands to edit individual rules. [Packs and networking](packs-and-networking)
 
 ## Attach and detach persistent volumes
 
-Run `kibo ws volume attach` to choose a stopped workspace and an available, unbound volume in its zone. The legacy attach form can use the default mount for the first volume. The positional form asks for a mount path when `--mount` is omitted in a terminal. Provide a mount path when adding another binding.
+Run `kibo ws volume attach` to choose a running or stopped workspace and an available, unbound volume in its zone. The legacy attach form can use the default mount for the first volume. The positional form asks for a mount path when `--mount` is omitted in a terminal. Provide a mount path when adding another binding.
 
 Run `kibo ws volume detach` to choose a workspace with attached volumes. With multiple bindings, choose one volume by its mount path or choose **All volumes**. Detaching the sole binding or all bindings asks for confirmation.
 
 ```bash
-kibo ws stop wks_123 --no-input --json
-kibo ws volume attach wks_123 vol_123 --mount /data --no-input --json
+kibo ws volume attach wks_123 vol_123 --mount /data --restart --no-input --json
 kibo ws volume detach wks_123 vol_123 --no-input --json
 kibo ws volumes set wks_123 vol_123:/data vol_456:/cache --no-input --json
 ```
 
-The script form `kibo ws volume detach wks_123 --no-input --json` detaches all volumes. `ws volumes set` replaces the full list. With no arguments in a terminal, it picks a stopped workspace and confirms detaching all volumes. In automation, a workspace with zero bindings in the command sends an empty list immediately.
+The script form `kibo ws volume detach wks_123 --no-input --json` detaches all volumes. `ws volumes set` replaces the full list. With no arguments in a terminal, it picks a running or stopped workspace and confirms detaching all volumes. In automation, a workspace with zero bindings in the command sends an empty list immediately.
 
 ## Resize and read metrics
 
-Run `kibo ws resize` to select a stopped or failed workspace and change its vCPUs, memory, or root disk. Enter keeps the current value and only changed values are sent. The root disk can only grow. Supplying any resource flag skips the resource questions.
+Run `kibo ws resize` to select a running, stopped, or failed workspace and change its vCPUs, memory, or root disk. Enter keeps the current value and only changed values are sent. The root disk can only grow. Supplying any resource flag skips the resource questions.
 
 Run `kibo ws metrics` to pick a workspace and inspect the default metrics interval. Pass the optional interval bounds as RFC3339 timestamps.
 
@@ -160,13 +170,15 @@ kibo ws resize wks_123 --vcpus 4 --memory-mib 8192 --disk-mib 40960 --no-input -
 kibo ws metrics wks_123 --start 2026-11-16T10:00:00Z --end 2026-11-16T11:00:00Z --no-input --json
 ```
 
-## Replace the Pack list
+## Manage Pack bindings
 
-Run `kibo ws packs set` without arguments to choose a workspace, see the available Pack IDs, and enter up to four unique IDs separated by commas or spaces. Leave the field blank or pass only a workspace to clear the list. In a terminal, `kibo` asks for confirmation before clearing unless you pass `--yes`. Changes take effect on the next start.
+Run `kibo ws packs set` without arguments to choose a workspace, see the available Pack IDs, and enter up to four unique IDs separated by commas or spaces. Leave the field blank or pass only a workspace to clear the list. Add or remove one binding with `kibo ws pack add` and `kibo ws pack remove`. A terminal can pick a Pack available in the workspace zone for add or choose among bound Packs for remove. Adding an existing binding or removing an absent one does nothing.
 
 ```bash
 kibo ws packs set wks_123 node-22 kibotos-desktop-env --no-input --json
 kibo ws packs set wks_123 --no-input --json # Clear the list
+kibo ws pack add wks_123 node-22 --restart --no-input --json
+kibo ws pack remove wks_123 node-22 --no-input --json
 ```
 
 ## Explicit Wait (`kibo workspace wait`)

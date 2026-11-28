@@ -35,6 +35,14 @@ func (a *App) resolveAvailableWorkspace(ctx context.Context, ref string) (*kibot
 	return client, id, err
 }
 
+func isAvailableWorkspace(w kibotos.Workspace) bool {
+	return w.Status == kibotos.WorkspaceStatusAvailable
+}
+
+func stoppedOrAvailableWorkspace(w kibotos.Workspace) bool {
+	return stoppedWorkspace(w) || isAvailableWorkspace(w)
+}
+
 func stoppedWorkspace(w kibotos.Workspace) bool {
 	return w.Status == kibotos.WorkspaceStatusStopped
 }
@@ -90,7 +98,7 @@ func parseVolumeBindings(values []string) ([]kibotos.WorkspaceVolumeInput, error
 	return volumes, nil
 }
 
-func (a *App) updateWorkspaceVolumeBindings(ctx context.Context, client *kibotos.Client, ws *kibotos.Workspace, volumeID, mount string, deleteWithWorkspace bool) error {
+func (a *App) updateWorkspaceVolumeBindings(ctx context.Context, client *kibotos.Client, ws *kibotos.Workspace, volumeID, mount string, deleteWithWorkspace, restart bool, timeout time.Duration) error {
 	volumes := workspaceVolumes(ws)
 	bindings := make([]kibotos.WorkspaceVolumeInput, 0, len(volumes)+1)
 	found := false
@@ -115,7 +123,9 @@ func (a *App) updateWorkspaceVolumeBindings(ctx context.Context, client *kibotos
 	} else if !found {
 		return a.renderWorkspace(ws)
 	}
-	ws, err := client.Workspaces.SetVolumes(ctx, ws.ID, bindings)
+	ws, err := a.withStoppedWorkspace(ctx, client, ws, "update volumes", restart, timeout, func() (*kibotos.Workspace, error) {
+		return client.Workspaces.SetVolumes(ctx, ws.ID, bindings)
+	})
 	if err != nil {
 		return err
 	}
@@ -124,42 +134,72 @@ func (a *App) updateWorkspaceVolumeBindings(ctx context.Context, client *kibotos
 
 func (a *App) newWorkspaceVolumesCmd() *cobra.Command {
 	root := &cobra.Command{Use: "volumes", Short: "Manage a workspace's full volume binding list"}
-	root.AddCommand(&cobra.Command{
-		Use:   "set [workspace] [vol_id:/path...]",
-		Short: "Replace all volume bindings (omit bindings to detach all)",
-		Args:  cobra.ArbitraryArgs,
+	var restart bool
+	var waitTimeout string
+	set := &cobra.Command{
+		Use:     "set [workspace] [vol_id:/path...]",
+		Short:   "Replace all volume bindings (omit bindings to detach all)",
+		Example: "  kibo ws volumes set\n  kibo ws volumes set wks_123 vol_123:/data --restart --no-input --json",
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			volumes, err := parseVolumeBindings(args[min(len(args), 1):])
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
-			client, id, picked, err := a.resolveCommandWorkspace(ctx, firstArg(args), stoppedWorkspace,
-				"no stopped workspaces found", "Select a stopped workspace:")
+			timeout, err := transitionTimeout(waitTimeout)
 			if err != nil {
 				return err
 			}
+			ctx := cmd.Context()
+			client, id, ws, err := a.resolveCommandWorkspace(ctx, firstArg(args), stoppedOrAvailableWorkspace,
+				"no running or stopped workspaces found", "Select a running or stopped workspace:")
+			if err != nil {
+				return err
+			}
+			ws, err = workspaceState(ctx, client, id, ws, restart || a.isInteractive())
+			if err != nil {
+				return err
+			}
+			action := "update volumes"
 			if len(volumes) == 0 {
-				label := id
-				if picked != nil {
-					label = resourceLabel(id, picked.Name)
-				}
-				ok, err := a.confirmDestructive(fmt.Sprintf("Detach all volumes from %s?", label))
-				if err != nil {
+				action = "detach all volumes"
+				question := fmt.Sprintf("Detach all volumes from %s?", resourceLabel(id, ws.Name))
+				if err := a.confirmVolumeRemoval(ws, restart, question); err != nil {
 					return err
 				}
-				if !ok {
-					return prompt.ErrCancelled
-				}
 			}
-			ws, err := client.Workspaces.SetVolumes(ctx, id, volumes)
+			ws, err = a.withStoppedWorkspace(ctx, client, ws, action, restart, timeout, func() (*kibotos.Workspace, error) {
+				return client.Workspaces.SetVolumes(ctx, id, volumes)
+			})
 			if err != nil {
 				return err
 			}
 			return a.renderWorkspace(ws)
 		},
-	})
+	}
+	addVolumeRestartFlags(set, &restart, &waitTimeout)
+	root.AddCommand(set)
 	return root
+}
+
+func addVolumeRestartFlags(cmd *cobra.Command, restart *bool, waitTimeout *string) {
+	cmd.Flags().BoolVar(restart, "restart", false, "If the workspace is running, stop it, update volumes, and start it again")
+	addTransitionTimeout(cmd, waitTimeout)
+}
+
+func (a *App) confirmVolumeRemoval(ws *kibotos.Workspace, restart bool, question string) error {
+	// The transition confirmation includes the removal when both need consent.
+	if isAvailableWorkspace(*ws) && !restart && a.isInteractive() {
+		return nil
+	}
+	ok, err := a.confirmDestructive(question)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return prompt.ErrCancelled
+	}
+	return nil
 }
 
 func validatePacks(packs []string) error {
@@ -184,69 +224,15 @@ func validatePackCSV(value string) error {
 	return validatePacks(splitPackCSV(value))
 }
 
-func (a *App) newWorkspacePacksCmd() *cobra.Command {
-	root := &cobra.Command{Use: "packs", Short: "Manage a workspace's Pack bindings"}
-	root.AddCommand(&cobra.Command{
-		Use:   "set [workspace] [pack_id...]",
-		Short: "Replace the Pack list for the next start (omit IDs to clear it)",
-		Args:  cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			packs := args[min(len(args), 1):]
-			if err := validatePacks(packs); err != nil {
-				return err
-			}
-			ctx := cmd.Context()
-			client, id, picked, err := a.resolveCommandWorkspace(ctx, firstArg(args), nil, "", "")
-			if err != nil {
-				return err
-			}
-			if len(args) == 0 {
-				page, err := collectAllPacks(ctx, client, &kibotos.PackListParams{Zone: picked.Zone})
-				if err != nil {
-					return err
-				}
-				if len(page.Data) > 0 {
-					ids := make([]string, 0, len(page.Data))
-					for _, item := range page.Data {
-						ids = append(ids, item.ID)
-					}
-					_, _ = fmt.Fprintln(a.stderr, "Available packs:", strings.Join(ids, ", "))
-				}
-				input, err := a.prompter().Input("Pack IDs (comma-separated, blank to clear)", "", validatePackCSV)
-				if err != nil {
-					return err
-				}
-				packs = splitPackCSV(input)
-			}
-			if len(packs) == 0 {
-				label := id
-				if picked != nil {
-					label = resourceLabel(id, picked.Name)
-				}
-				ok, err := a.confirmDestructive(fmt.Sprintf("Clear all Packs on %s?", label))
-				if err != nil {
-					return err
-				}
-				if !ok {
-					return prompt.ErrCancelled
-				}
-			}
-			ws, err := client.Workspaces.SetPacks(ctx, id, packs)
-			if err != nil {
-				return err
-			}
-			return a.renderWorkspace(ws)
-		},
-	})
-	return root
-}
-
 func (a *App) newWorkspaceResizeCmd() *cobra.Command {
 	var resources kibotos.WorkspaceResourcesInput
+	var restart bool
+	var waitTimeout string
 	cmd := &cobra.Command{
-		Use:   "resize [id-or-name]",
-		Short: "Change CPU or memory or grow the root disk of a stopped or failed workspace",
-		Args:  cobra.MaximumNArgs(1),
+		Use:     "resize [id-or-name]",
+		Short:   "Change CPU or memory or grow the root disk of a workspace",
+		Example: "  kibo ws resize\n  kibo ws resize wks_123 --vcpus 4 --restart --no-input --json",
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			hasResources := cmd.Flags().Changed("vcpus") || cmd.Flags().Changed("memory-mib") || cmd.Flags().Changed("disk-mib")
 			if !hasResources && !a.isInteractive() {
@@ -263,27 +249,31 @@ func (a *App) newWorkspaceResizeCmd() *cobra.Command {
 			if _, err := optionalIntFlag(cmd, "disk-mib", resources.DiskMiB, minDiskMiB, maxDiskMiB); err != nil {
 				return err
 			}
+			timeout, err := transitionTimeout(waitTimeout)
+			if err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			client, id, picked, err := a.resolveCommandWorkspace(ctx, firstArg(args), func(w kibotos.Workspace) bool {
-				return stoppedWorkspace(w) || w.Status == kibotos.WorkspaceStatusFailed
-			}, "no stopped or failed workspaces found to resize", "Select a stopped or failed workspace to resize:")
+				return stoppedOrAvailableWorkspace(w) || w.Status == kibotos.WorkspaceStatusFailed
+			}, "no running, stopped, or failed workspaces found to resize", "Select a workspace to resize:")
+			if err != nil {
+				return err
+			}
+			picked, err = workspaceState(ctx, client, id, picked, restart || a.isInteractive())
 			if err != nil {
 				return err
 			}
 			request := resources
 			if !hasResources {
-				if picked == nil {
-					picked, err = client.Workspaces.Get(ctx, id)
-					if err != nil {
-						return err
-					}
-				}
 				request, err = a.promptResize(picked.Resources)
 				if err != nil {
 					return err
 				}
 			}
-			ws, err := client.Workspaces.Update(ctx, id, kibotos.UpdateWorkspaceRequest{Resources: &request})
+			ws, err := a.withStoppedWorkspace(ctx, client, picked, "resize", restart, timeout, func() (*kibotos.Workspace, error) {
+				return client.Workspaces.Update(ctx, id, kibotos.UpdateWorkspaceRequest{Resources: &request})
+			})
 			if err != nil {
 				return err
 			}
@@ -293,6 +283,8 @@ func (a *App) newWorkspaceResizeCmd() *cobra.Command {
 	cmd.Flags().IntVar(&resources.VCPUs, "vcpus", 0, "New vCPU count")
 	cmd.Flags().IntVar(&resources.MemoryMiB, "memory-mib", 0, "New memory size in MiB")
 	cmd.Flags().IntVar(&resources.DiskMiB, "disk-mib", 0, "New root disk size in MiB")
+	cmd.Flags().BoolVar(&restart, "restart", false, "If the workspace is running, stop it, apply the resize, and start it again")
+	addTransitionTimeout(cmd, &waitTimeout)
 	return cmd
 }
 

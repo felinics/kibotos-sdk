@@ -16,6 +16,8 @@ import (
 	"golang.org/x/term"
 )
 
+const supportsPTY = true
+
 func (a *App) runPTY(ctx context.Context, client *kibotos.Client, id string, req kibotos.ExecRequest, input *os.File) error {
 	const streamID = 1
 	fd := int(input.Fd())

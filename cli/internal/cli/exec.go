@@ -74,7 +74,7 @@ func (a *App) newExecCmd() *cobra.Command {
 			}
 			if len(req.Argv) == 0 {
 				if tty {
-					req.Argv = []string{"/bin/sh", "-lc", "if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh -l; fi"}
+					req.Argv = loginShellArgv()
 				} else if !prompting {
 					return missingExecCommand()
 				}
@@ -160,6 +160,10 @@ func (a *App) newExecCmd() *cobra.Command {
 	f.BoolVarP(&interactive, "interactive", "i", false, "Forward terminal input (use with -t)")
 	f.BoolVarP(&tty, "tty", "t", false, "Allocate a remote PTY (use with -i)")
 	return cmd
+}
+
+func loginShellArgv() []string {
+	return []string{"/bin/sh", "-lc", "if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh -l; fi"}
 }
 
 func missingExecCommand() error {

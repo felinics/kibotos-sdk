@@ -14,6 +14,7 @@ This skill teaches you how to drive the official **`kibo`** CLI reliably, safely
 Before performing any resource action, verify that `kibo` is installed and authenticated:
 
 ```bash
+kibo -v --json
 kibo whoami --json
 ```
 
@@ -30,11 +31,12 @@ Follow these rules on every `kibo` invocation:
 1. **Pass explicit inputs and use `--no-input --json`.**
    - Pass resource IDs, required paths, and required flags without relying on pickers. Human users can omit essential inputs in a terminal for a guided flow.
    - Missing inputs return exit 2 before authentication. For egresses and resolvers, use canonical IDs or unique names and resolve an `ambiguous_name` error with one of the candidate IDs.
-   - In `--json` mode, `stdout` carries JSON and interactive prompts are disabled. `exec --stream --json` emits one JSON event per line. Plain `files get` streams file bytes to stdout. Use a local destination to get metadata in JSON mode.
+   - In `--json` mode, `stdout` carries JSON and interactive prompts are disabled. `exec --stream --json` emits one JSON event per line. Plain `files get` and `cp workspace:path -` stream file bytes to stdout. Use a local destination for JSON download metadata.
    - Progress updates, interactive login URLs/codes, multi-zone warnings, and structured error envelopes (`{"error": {...}}`) are always written to `stderr`.
-   - For shell capture, `-q` (`--quiet`) prints bare IDs for resource commands and the bare URL for `desktop`.
+   - For shell capture, `-q` (`--quiet`) prints bare IDs for resource commands and the bare URL for `desktop` and `open`. `open` also skips launching a browser with `--no-open` or `--json`.
+   - Pass `--restart` only when a running workspace may be restarted for resize, volume, or Pack changes. Pack changes without this flag take effect on the next start. Use `--start` only when a stopped workspace may be powered on. `--yes` alone does not authorize these transitions.
 2. **Async lifecycle commands wait by default (`--no-wait` for parallel fan-out)**:
-   - Creation, start, stop, deletion, live network changes, and volume creation/resize/deletion **wait until completion by default** (`--wait-timeout` defaults to `5m` / `300s`).
+   - Creation, start, stop, restart, deletion, live network changes, and volume creation/resize/deletion **wait until completion by default** (`--wait-timeout` defaults to `5m` / `300s`).
    - Pass `--no-wait` only when you intentionally want to trigger multiple operations in parallel and wait on them afterwards.
 3. **Check exit codes & `retryable` errors**:
    - `0` = success
@@ -109,26 +111,32 @@ kibo workspace start wks_... --json
 ```bash
 kibo exec wks_... --no-input --json --workdir /app --timeout 60 -- python3 main.py
 kibo exec wks_... --stream --timeout 900 --no-input --json -- python3 -u main.py
-kibo files put wks_... ./main.py /app/main.py --create-only --no-input --json
-kibo files get wks_... /app/output.log ./output.log --no-input --json
+kibo cp ./main.py wks_...:/app/ --create-only --no-input --json
+kibo cp wks_...:/app/output.log ./output.log --no-input --json
+kibo open wks_... 8080 --no-input --json
 kibo tunnel wks_... 8080 --listen 127.0.0.1:18080 --no-input --json
 ```
 
-Pass `--stream --timeout <seconds>` for commands that may run past the default 30 seconds. A user can run `kibo exec -it` from a Unix terminal to choose an available workspace and open a login shell. A tunnel emits its listener address at startup and stays open until canceled.
+Pass `--stream --timeout <seconds>` for commands that may run past the default 30 seconds. A user can run `kibo shell` from a Unix terminal to open a login shell. Use `kibo exec` for machine-readable execution. A tunnel emits its listener address at startup and stays open until canceled.
 
 ### Configure Packs, resources, and networking
 
 ```bash
 kibo pack get node-22 --no-input --json
 kibo ws packs set wks_... node-22 kibotos-desktop-env --no-input --json
-kibo ws resize wks_... --memory-mib 4096 --no-input --json
+kibo ws pack add wks_... python-3.12 --no-input --json
+kibo ws pack remove wks_... node-22 --no-input --json
+kibo ws resize wks_... --memory-mib 4096 --restart --no-input --json
 kibo ws metrics wks_... --no-input --json
 kibo ws volumes set wks_... vol_...:/data --no-input --json
 kibo egress create --address proxy.example.com:1080 --name proxy --no-input --json
 kibo resolver create --protocol https --url https://dns.example/dns-query --no-input --json
+kibo ws network allow wks_... 203.0.113.0/24 --no-input --json
+kibo ws network use-egress wks_... egr_... 10.0.0.0/8 --no-input --json
+kibo ws network use-resolver wks_... rsv_... --via-egress --no-input --json
 ```
 
-The Pack list applies on the next start. Volume and Pack set commands replace the existing list. A workspace argument by itself clears the list in automation. Resize applies to stopped or failed workspaces, and the disk can only grow.
+The Pack list applies on the next start. Volume and Pack set commands replace the existing list. A workspace argument by itself clears the list in automation. The root disk can only grow. Incremental network subcommands preserve other policy fields. In `deny_all` mode, switch to `public_internet` before adding rules.
 
 ### Extend Timeout, Toggle Network, Stop, or Clean Up
 
@@ -139,7 +147,10 @@ kibo workspace timeout wks_... --seconds 2h --action stop --json
 # Lock down outbound internet access (waits until applied by default)
 kibo workspace network wks_... --mode deny_all --json
 
-# Stop or delete cleanly (waits until complete by default; pass --no-wait to return immediately)
+# Restart with a fresh timeout, waiting for availability
+kibo ws restart wks_... --timeout 2h --no-input --json
+
+# Stop or delete cleanly (waits until complete by default)
 kibo workspace stop wks_... --json
 kibo workspace delete wks_... --json
 ```

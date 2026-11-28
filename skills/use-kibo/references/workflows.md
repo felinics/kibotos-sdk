@@ -21,8 +21,8 @@ WS_ID=$(kibo workspace create \
   --label task=preview \
   -q)
 
-# 4. Expose port 8080 over HTTPS
-kibo exposure create "$WS_ID" 8080 --ttl 30m --json
+# 4. Reuse or create a port 8080 exposure over HTTPS
+kibo open "$WS_ID" 8080 --ttl 30m --no-input --json
 
 # 5. Revoke exposure and delete workspace when finished (confirm with user first)
 kibo exposure revoke "$WS_ID" exp_... --json
@@ -98,9 +98,9 @@ kibo workspace list --profile prod --json
 Use an available workspace. The script sends every path and the exact remote argv.
 
 ```bash
-kibo files put "$WS_ID" ./main.py /app/main.py --create-only --no-input --json
+kibo cp ./main.py "$WS_ID:/app/" --create-only --no-input --json
 kibo exec "$WS_ID" --workdir /app --stream --timeout 900 --no-input --json -- python3 -u main.py
-kibo files get "$WS_ID" /app/output.log ./output.log --no-input --json
+kibo cp "$WS_ID:/app/output.log" ./output.log --no-input --json
 kibo ws metrics "$WS_ID" --no-input --json
 ```
 
@@ -112,14 +112,14 @@ kibo tunnel "$WS_ID" --remote 8080 --listen 127.0.0.1:18080 --no-input --json
 
 ## Workflow 6. Prepare the next workspace start
 
-Check the workspace zone and volumes before replacing bindings. Supply the complete desired list each time.
+Use `--restart` for a single change that needs to take effect immediately. For several changes, stop and start once around the full batch. Check the workspace zone and volumes before replacing bindings.
 
 ```bash
 kibo ws stop "$WS_ID" --no-input --json
 kibo ws resize "$WS_ID" --memory-mib 4096 --no-input --json
 kibo ws volumes set "$WS_ID" "$VOL_ID:/data" --no-input --json
 kibo pack list --zone global-1 --no-input --json
-kibo ws packs set "$WS_ID" node-22 --no-input --json
+kibo ws pack add "$WS_ID" node-22 --no-input --json
 kibo ws start "$WS_ID" --no-input --json
 ```
 

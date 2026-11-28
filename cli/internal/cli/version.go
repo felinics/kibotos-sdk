@@ -25,32 +25,39 @@ func (a *App) newVersionCmd() *cobra.Command {
 		Short: "Print kibo CLI version information",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			info := versionInfo{
-				Version:    a.build.Version,
-				SDKVersion: kibotos.Version,
-				Commit:     a.build.Commit,
-				Date:       a.build.Date,
-				GoVersion:  runtime.Version(),
-				OS:         runtime.GOOS,
-				Arch:       runtime.GOARCH,
-			}
-			p := a.printer()
-			if p.IsJSON() {
-				return p.JSON(info)
-			}
-			items := []output.KV{
-				{Key: "CLI Version", Value: info.Version},
-				{Key: "SDK Version", Value: info.SDKVersion},
-				{Key: "Go Version", Value: info.GoVersion},
-				{Key: "Platform", Value: info.OS + "/" + info.Arch},
-			}
-			if info.Commit != "" {
-				items = append(items, output.KV{Key: "Commit", Value: info.Commit})
-			}
-			if info.Date != "" {
-				items = append(items, output.KV{Key: "Built", Value: info.Date})
-			}
-			return p.Details(items)
+			return a.renderVersion()
 		},
 	}
+}
+
+func (a *App) renderVersion() error {
+	info := versionInfo{
+		Version:    a.build.Version,
+		SDKVersion: kibotos.Version,
+		Commit:     a.build.Commit,
+		Date:       a.build.Date,
+		GoVersion:  runtime.Version(),
+		OS:         runtime.GOOS,
+		Arch:       runtime.GOARCH,
+	}
+	p := a.printer()
+	if p.IsJSON() {
+		return p.JSON(info)
+	}
+	if p.IsQuiet() {
+		return p.ID(info.Version)
+	}
+	items := []output.KV{
+		{Key: "CLI Version", Value: info.Version},
+		{Key: "SDK Version", Value: info.SDKVersion},
+		{Key: "Go Version", Value: info.GoVersion},
+		{Key: "Platform", Value: info.OS + "/" + info.Arch},
+	}
+	if info.Commit != "" {
+		items = append(items, output.KV{Key: "Commit", Value: info.Commit})
+	}
+	if info.Date != "" {
+		items = append(items, output.KV{Key: "Built", Value: info.Date})
+	}
+	return p.Details(items)
 }

@@ -30,6 +30,7 @@ func (a *App) newWorkspaceCmd() *cobra.Command {
 		a.newWorkspaceDeleteCmd(),
 		a.newWorkspaceStartCmd(),
 		a.newWorkspaceStopCmd(),
+		a.newWorkspaceRestartCmd(),
 		a.newWorkspaceTimeoutCmd(),
 		a.newWorkspaceNetworkCmd(),
 		a.newWorkspaceVolumeCmd(),
@@ -626,25 +627,9 @@ func (a *App) newWorkspaceStartCmd() *cobra.Command {
 		Short: "Start a stopped workspace",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var params *kibotos.StartWorkspaceParams
-			if cmd.Flags().Changed("timeout") || cmd.Flags().Changed("timeout-action") {
-				if !cmd.Flags().Changed("timeout") {
-					return usageError("--timeout is required when --timeout-action is set")
-				}
-				timeoutSec, err := parseDurationSeconds(timeoutRaw, "timeout")
-				if err != nil {
-					return err
-				}
-				act, err := parseTimeoutAction(timeoutAction)
-				if err != nil {
-					return err
-				}
-				params = &kibotos.StartWorkspaceParams{
-					Timeout: &kibotos.TimeoutSpec{
-						Seconds: timeoutSec,
-						Action:  act,
-					},
-				}
+			params, err := parseStartWorkspaceParams(cmd, timeoutRaw, timeoutAction)
+			if err != nil {
+				return err
 			}
 			shouldWait, waitDur, err := resolveWait(cmd, wait, noWait, waitTimeout)
 			if err != nil {
@@ -688,6 +673,78 @@ func (a *App) newWorkspaceStartCmd() *cobra.Command {
 	f.StringVar(&timeoutRaw, "timeout", "", "Auto-timeout duration (e.g. 1h, 30m, 3600; bare integer is seconds)")
 	f.StringVar(&timeoutAction, "timeout-action", "", "Action on timeout expiration: stop or delete")
 	addWaitFlags(cmd, &wait, &noWait, &waitTimeout, "the workspace reaches available")
+	return cmd
+}
+
+func parseStartWorkspaceParams(cmd *cobra.Command, timeoutRaw, timeoutAction string) (*kibotos.StartWorkspaceParams, error) {
+	if !cmd.Flags().Changed("timeout") {
+		if cmd.Flags().Changed("timeout-action") {
+			return nil, missingFlagError("--timeout", "Pass --timeout with --timeout-action, for example --timeout 1h.")
+		}
+		return nil, nil
+	}
+	seconds, err := parseDurationSeconds(timeoutRaw, "timeout")
+	if err != nil {
+		return nil, err
+	}
+	action, err := parseTimeoutAction(timeoutAction)
+	if err != nil {
+		return nil, err
+	}
+	return &kibotos.StartWorkspaceParams{Timeout: &kibotos.TimeoutSpec{Seconds: seconds, Action: action}}, nil
+}
+
+func (a *App) newWorkspaceRestartCmd() *cobra.Command {
+	var force, wait, noWait bool
+	var timeoutRaw, timeoutAction, waitTimeout string
+	cmd := &cobra.Command{
+		Use:     "restart [id-or-name]",
+		Short:   "Restart a workspace (stop and start)",
+		Example: "  kibo ws restart\n  kibo ws restart wks_123 --timeout 1h --no-input --json",
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params, err := parseStartWorkspaceParams(cmd, timeoutRaw, timeoutAction)
+			if err != nil {
+				return err
+			}
+			shouldWait, timeout, err := resolveRestartWait(cmd, wait, noWait, waitTimeout)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, id, ws, err := a.resolveCommandWorkspace(ctx, firstArg(args), isAvailableWorkspace,
+				"no available workspaces found to restart", "Select an available workspace to restart:")
+			if err != nil {
+				return err
+			}
+			if ws == nil {
+				ws = &kibotos.Workspace{ID: id}
+			}
+			if force {
+				ok, err := a.confirmDestructive(fmt.Sprintf("Force power-off workspace %s before starting it again?", resourceLabel(ws.ID, ws.Name)))
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return prompt.ErrCancelled
+				}
+			}
+			stopped, err := a.stopWorkspaceAndWait(ctx, client, ws, force, timeout)
+			if err != nil {
+				return err
+			}
+			ws, err = a.startWorkspace(ctx, client, stopped, params, shouldWait, timeout)
+			if err != nil {
+				return err
+			}
+			return a.renderWorkspace(ws)
+		},
+	}
+	f := cmd.Flags()
+	f.BoolVar(&force, "force", false, "Force immediate power-off before starting again")
+	f.StringVar(&timeoutRaw, "timeout", "", "Auto-timeout after starting (e.g. 1h, 30m, 3600)")
+	f.StringVar(&timeoutAction, "timeout-action", "", "Action on timeout expiration: stop or delete")
+	addWaitFlags(cmd, &wait, &noWait, &waitTimeout, "the workspace reaches available again")
 	return cmd
 }
 
@@ -835,107 +892,6 @@ func (a *App) newWorkspaceTimeoutCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *App) newWorkspaceNetworkCmd() *cobra.Command {
-	var (
-		mode                             string
-		allow, deny, egresses, resolvers []string
-		drain                            int
-		wait                             bool
-		noWait                           bool
-		waitTimeout                      string
-	)
-
-	cmd := &cobra.Command{
-		Use:   "network [id-or-name]",
-		Short: "Update a workspace's outbound network policy",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			var (
-				parsedMode kibotos.NetworkMode
-				err        error
-			)
-			if cmd.Flags().Changed("mode") {
-				parsedMode, err = parseNetworkMode(mode)
-				if err != nil {
-					return err
-				}
-			} else if !a.isInteractive() {
-				return missingFlagError("--mode", "Pass --mode public_internet or --mode deny_all.")
-			}
-
-			params, err := parseWorkspaceNetwork(allow, deny, egresses, resolvers)
-			if err != nil {
-				return err
-			}
-			validateMode := func(mode kibotos.NetworkMode) error {
-				if mode == kibotos.NetworkModeDenyAll && len(allow)+len(deny)+len(egresses)+len(resolvers) != 0 {
-					return usageError("deny_all requires empty allow, deny, egress and resolver lists")
-				}
-				return nil
-			}
-			if err := validateMode(parsedMode); err != nil {
-				return err
-			}
-			params.DrainSeconds, err = optionalIntFlag(cmd, "drain-seconds", drain, 0, 3600)
-			if err != nil {
-				return err
-			}
-			shouldWait, waitDur, err := resolveWait(cmd, wait, noWait, waitTimeout)
-			if err != nil {
-				return err
-			}
-
-			ctx := cmd.Context()
-			client, wsID, _, err := a.resolveCommandWorkspace(ctx, firstArg(args), nil, "", "Select a workspace to update network policy:")
-			if err != nil {
-				return err
-			}
-
-			if parsedMode == "" {
-				choice, err := a.prompter().Select("Outbound network mode:", "Mode", []prompt.Option{
-					{Value: string(kibotos.NetworkModePublicInternet), Label: "public_internet", Description: "Allow outbound internet access"},
-					{Value: string(kibotos.NetworkModeDenyAll), Label: "deny_all", Description: "Block all outbound internet traffic"},
-				}, 0)
-				if err != nil {
-					return err
-				}
-				parsedMode = kibotos.NetworkMode(choice.Value)
-				if err := validateMode(parsedMode); err != nil {
-					return err
-				}
-			}
-
-			params.Mode = parsedMode
-			ws, err := client.Workspaces.SetNetwork(ctx, wsID, params)
-			if err != nil {
-				return err
-			}
-
-			if shouldWait && ws.Status != kibotos.WorkspaceStatusStopped && !networkApplied(ws) {
-				p := a.printer()
-				stopSpin := p.StartSpinner(fmt.Sprintf("Waiting for network policy %q to apply on workspace %s...", parsedMode, ws.ID))
-				ws, err = a.waitWorkspaceNetworkApplied(ctx, client, ws.ID, ws.Network, waitDur)
-				if err != nil {
-					stopSpin(fmt.Sprintf("Failed applying network policy on %s", ws.ID), false)
-					return err
-				}
-				stopSpin(fmt.Sprintf("Network policy %q applied on %s", parsedMode, ws.ID), true)
-			}
-			return a.renderWorkspace(ws)
-		},
-	}
-
-	f := cmd.Flags()
-	f.StringVar(&mode, "mode", "", "Outbound network mode: public_internet or deny_all")
-	f.StringArrayVar(&allow, "allow", nil, "Allowed outbound IP or CIDR (repeatable)")
-	f.StringArrayVar(&deny, "deny", nil, "Denied outbound IP or CIDR (repeatable)")
-	f.StringArrayVar(&egresses, "egress", nil, "Egress rule as egress_id=IP_OR_CIDR[,IP_OR_CIDR...]")
-	f.StringArrayVar(&resolvers, "resolver", nil, "Resolver as resolver_id (direct) or resolver_id=egress_id")
-	f.IntVar(&drain, "drain-seconds", 0, "Seconds to drain connections on the previous egress path (0–3600)")
-	addWaitFlags(cmd, &wait, &noWait, &waitTimeout, "the network policy is applied")
-	return cmd
-}
-
 func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "volume",
@@ -943,16 +899,19 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 	}
 
 	var (
-		volumeRef           string
-		mountPath           string
-		newMount            string
-		deleteWithWorkspace bool
+		volumeRef                            string
+		mountPath                            string
+		newMount                             string
+		deleteWithWorkspace                  bool
+		attachRestart, detachRestart         bool
+		attachWaitTimeout, detachWaitTimeout string
 	)
 
 	attachCmd := &cobra.Command{
-		Use:   "attach [workspace] [volume]",
-		Short: "Attach a persistent volume to a workspace",
-		Args:  cobra.MaximumNArgs(2),
+		Use:     "attach [workspace] [volume]",
+		Short:   "Attach a persistent volume to a workspace",
+		Example: "  kibo ws volume attach\n  kibo ws volume attach wks_123 vol_123 --mount /data --restart --no-input --json",
+		Args:    cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			positional := len(args) == 2
 			volume, mount := volumeRef, mountPath
@@ -986,9 +945,13 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 				}
 			}
 
+			timeout, err := transitionTimeout(attachWaitTimeout)
+			if err != nil {
+				return err
+			}
 			ctx := cmd.Context()
-			client, id, ws, err := a.resolveCommandWorkspace(ctx, firstArg(args), stoppedWorkspace,
-				"no stopped workspaces found (stop a workspace before attaching a volume)", "Select a stopped workspace:")
+			client, id, ws, err := a.resolveCommandWorkspace(ctx, firstArg(args), stoppedOrAvailableWorkspace,
+				"no running or stopped workspaces found", "Select a running or stopped workspace:")
 			if err != nil {
 				return err
 			}
@@ -1018,10 +981,12 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 					}
 					mount, _ = validateMountPath(mount)
 				}
-				return a.updateWorkspaceVolumeBindings(ctx, client, ws, volID, mount, deleteWithWorkspace)
+				return a.updateWorkspaceVolumeBindings(ctx, client, ws, volID, mount, deleteWithWorkspace, attachRestart, timeout)
 			}
-			ws, err = client.Workspaces.AttachVolume(ctx, id, kibotos.AttachVolumeParams{
-				ID: volID, MountPath: mount, DeleteWithWorkspace: deleteWithWorkspace,
+			ws, err = a.withStoppedWorkspace(ctx, client, ws, "update volumes", attachRestart, timeout, func() (*kibotos.Workspace, error) {
+				return client.Workspaces.AttachVolume(ctx, id, kibotos.AttachVolumeParams{
+					ID: volID, MountPath: mount, DeleteWithWorkspace: deleteWithWorkspace,
+				})
 			})
 			if err != nil {
 				return err
@@ -1029,6 +994,7 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 			return a.renderWorkspace(ws)
 		},
 	}
+	addVolumeRestartFlags(attachCmd, &attachRestart, &attachWaitTimeout)
 	af := attachCmd.Flags()
 	af.StringVar(&newMount, "mount", "", "Absolute path for the volume mount")
 	af.StringVar(&volumeRef, "volume", "", "Persistent volume ID or name to attach")
@@ -1036,27 +1002,30 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 	af.BoolVar(&deleteWithWorkspace, "delete-with-workspace", false, "Delete the volume when the workspace is deleted")
 
 	detachCmd := &cobra.Command{
-		Use:   "detach [workspace] [volume]",
-		Short: "Detach a volume or detach all volumes",
-		Args:  cobra.MaximumNArgs(2),
+		Use:     "detach [workspace] [volume]",
+		Short:   "Detach a volume or detach all volumes",
+		Example: "  kibo ws volume detach\n  kibo ws volume detach wks_123 vol_123 --restart --no-input --json",
+		Args:    cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 2 && strings.TrimSpace(args[1]) == "" {
 				return missingVolumeRef()
 			}
+			timeout, err := transitionTimeout(detachWaitTimeout)
+			if err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			client, id, ws, err := a.resolveCommandWorkspace(ctx, firstArg(args), func(w kibotos.Workspace) bool {
-				return (stoppedWorkspace(w) || w.Status == kibotos.WorkspaceStatusFailed) && len(workspaceVolumes(&w)) > 0
-			}, "no stopped or failed workspaces with attached volumes found", "Select a workspace to detach volumes from:")
+				return len(workspaceVolumes(&w)) > 0
+			}, "no workspaces with attached volumes found", "Select a workspace to detach volumes from:")
+			if err != nil {
+				return err
+			}
+			ws, err = workspaceState(ctx, client, id, ws, len(args) == 2 || detachRestart || a.isInteractive())
 			if err != nil {
 				return err
 			}
 			if len(args) == 2 {
-				if ws == nil {
-					ws, err = client.Workspaces.Get(ctx, id)
-					if err != nil {
-						return err
-					}
-				}
 				volID, _, err := a.resolveVolume(ctx, client, args[1], func(v kibotos.Volume) bool {
 					return slices.ContainsFunc(workspaceVolumes(ws), func(binding kibotos.WorkspaceVolume) bool {
 						return binding.ID == v.ID
@@ -1065,15 +1034,10 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return a.updateWorkspaceVolumeBindings(ctx, client, ws, volID, "", false)
+				return a.updateWorkspaceVolumeBindings(ctx, client, ws, volID, "", false, detachRestart, timeout)
 			}
+			action := "update volumes"
 			if a.isInteractive() {
-				if ws == nil {
-					ws, err = client.Workspaces.Get(ctx, id)
-					if err != nil {
-						return err
-					}
-				}
 				vols := workspaceVolumes(ws)
 				if len(vols) == 0 {
 					return &CLIError{ExitCode: ExitError, Code: "no_matching_volume", Message: "workspace has no attached volumes"}
@@ -1097,17 +1061,19 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 					message = fmt.Sprintf("Detach volume %s from %s?", vols[0].ID, label)
 				}
 				if selected != "" {
-					return a.updateWorkspaceVolumeBindings(ctx, client, ws, selected, "", false)
+					return a.updateWorkspaceVolumeBindings(ctx, client, ws, selected, "", false, detachRestart, timeout)
 				}
-				ok, err := a.confirmDestructive(message)
-				if err != nil {
+				action = "detach all volumes"
+				if len(vols) == 1 {
+					action = fmt.Sprintf("detach volume %s", vols[0].ID)
+				}
+				if err := a.confirmVolumeRemoval(ws, detachRestart, message); err != nil {
 					return err
 				}
-				if !ok {
-					return prompt.ErrCancelled
-				}
 			}
-			ws, err = client.Workspaces.DetachVolume(ctx, id)
+			ws, err = a.withStoppedWorkspace(ctx, client, ws, action, detachRestart, timeout, func() (*kibotos.Workspace, error) {
+				return client.Workspaces.DetachVolume(ctx, id)
+			})
 			if err != nil {
 				return err
 			}
@@ -1115,6 +1081,7 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 		},
 	}
 
+	addVolumeRestartFlags(detachCmd, &detachRestart, &detachWaitTimeout)
 	cmd.AddCommand(attachCmd, detachCmd)
 	return cmd
 }

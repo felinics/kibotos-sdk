@@ -44,6 +44,13 @@ This standard applies to the Kibotos CLI, its tests, and its user-facing documen
 - Use the prompt reader for subsequent stdin data if a prompt has buffered
   bytes. Finish picker interaction before starting a remote PTY.
 
+## Auto-orchestration & state transitions
+
+- For resize and volume changes on a running workspace, ask one `Confirm(..., true)` with a `[Y/n]` default and name the stop, change, and start. With consent, stop, wait for `stopped`, apply the change, start, and wait for `available`. Pack changes on a running workspace ask before saving the new list and restarting. Opening a shell on a stopped workspace asks before starting it.
+- Ask at most one transition confirmation. Include destructive clears in that question when applicable. Declining returns `prompt.ErrCancelled` before any mutation. Keep optional tuning on flags and report transition progress on stderr.
+- When `a.isInteractive()` is false, implicit transitions require explicit `--restart` or `--start` where supported. `--yes` alone does not authorize a transition. Without opt-in, offline mutations let the API enforce state and Pack changes take effect on the next start. Explicit opt-in runs without a transition prompt. Required inputs still fail with exit 2 before auth.
+- A restart always waits for `stopped` before starting. For commands that support `--no-wait`, it skips only the final wait for `available`. Keep destructive `--force` confirmation default-no in a terminal unless `--yes` is set.
+
 ## Preserve the automation contract
 
 `a.isInteractive()` is false under any of these conditions.

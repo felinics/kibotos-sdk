@@ -12,9 +12,11 @@ kibo pack list --zone global-1 --no-input --json
 kibo pack get node-22 --no-input --json
 kibo pack get node-22 --revision r42 --no-input --json
 kibo ws packs set wks_123 node-22 kibotos-desktop-env --no-input --json
+kibo ws pack add wks_123 python-3.12 --restart --no-input --json
+kibo ws pack remove wks_123 node-22 --no-input --json
 ```
 
-A workspace can bind up to four unique Pack IDs. `ws packs set` replaces the ordered list for the next start. [Workspace configuration](workspaces)
+A workspace can bind up to four unique Pack IDs. Use `ws pack add` and `ws pack remove` to change one binding or `ws packs set` to replace the ordered list. Both `pack` and `packs` work under `ws`. Use `--restart` in automation when the new list should take effect immediately on a running workspace. [Workspace configuration](workspaces#apply-configuration-changes-on-a-running-workspace)
 
 ## SOCKS5 egresses
 
@@ -59,3 +61,19 @@ Bind resources by ID when updating the outbound policy. A resolver ID alone uses
 kibo ws network wks_123 --mode public_internet \
   --egress egr_123=10.0.0.0/8 --resolver rsv_123=egr_123 --no-input --json
 ```
+
+
+## Edit one workspace network rule
+
+```bash
+kibo ws network allow wks_123 203.0.113.0/24 --no-input --json
+kibo ws network deny wks_123 198.51.100.2 --remove --no-input --json
+kibo ws network use-egress wks_123 egr_123 10.0.0.0/8 --no-input --json
+kibo ws network use-resolver wks_123 rsv_123 --via-egress --no-input --json
+kibo ws network use-resolver wks_123 --clear --no-input --json
+kibo ws network use-egress wks_123 --clear --no-input --json
+```
+
+Incremental edits preserve the network mode and the other rule lists. Switch to `public_internet` before adding rules to a workspace in `deny_all` mode. `allow` and `deny` deduplicate addresses and accept `--remove`. `use-egress` and `use-resolver` accept IDs or unique names and replace or clear the selected rule. Provide destination CIDRs explicitly in automation. In a terminal, omitting them opens a prompt with `0.0.0.0/0` as the default. `--via-egress` uses the configured egress for DNS. Clear or reroute a resolver that depends on an egress before removing that egress.
+
+Running workspaces wait for `network.applied` by default. Pass `--no-wait` to return after sending the change. A stopped workspace applies its policy on the next start.

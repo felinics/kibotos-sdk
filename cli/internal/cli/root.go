@@ -81,6 +81,7 @@ type App struct {
 // NewRootCommand builds the complete `kibo` cobra command tree.
 func NewRootCommand(opts Options) *cobra.Command {
 	app := newApp(opts)
+	var version bool
 
 	root := &cobra.Command{
 		Use:           "kibo",
@@ -88,6 +89,13 @@ func NewRootCommand(opts Options) *cobra.Command {
 		Long:          "kibo is the official command-line interface for Kibotos.\nManage workspaces, run commands, transfer files, and open tunnels. Configure volumes, Packs, exposures, and networking.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if version {
+				return app.renderVersion()
+			}
+			return cmd.Help()
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			return app.validateOutputFlags(cmd)
 		},
@@ -100,12 +108,14 @@ func NewRootCommand(opts Options) *cobra.Command {
 		return wrapUsageError(err)
 	})
 
+	root.Flags().BoolVarP(&version, "version", "v", false, "Print kibo CLI version information")
+
 	pf := root.PersistentFlags()
 	pf.BoolVar(&app.flagJSON, "json", false, "Output valid JSON to stdout (shorthand for -o json)")
 	pf.StringVarP(&app.flagOutput, "output", "o", "", "Output format: table or json (env: KIBO_OUTPUT)")
 	pf.BoolVarP(&app.flagQuiet, "quiet", "q", false, "Output only the primary value (such as an ID or URL) and suppress progress messages")
 	pf.BoolVar(&app.flagNoInput, "no-input", false, "Disable interactive prompts and fail fast on missing inputs (env: KIBO_NO_INPUT)")
-	pf.BoolVarP(&app.flagYes, "yes", "y", false, "Skip interactive confirmation prompts")
+	pf.BoolVarP(&app.flagYes, "yes", "y", false, "Skip destructive confirmation prompts")
 	pf.BoolVar(&app.flagNoColor, "no-color", false, "Disable colored output (env: NO_COLOR)")
 	pf.StringVar(&app.flagProfile, "profile", "", "Profile name to use")
 	pf.StringVar(&app.flagOrg, "org", "", "Override organization ID for this command (env: KIBO_ORG)")
@@ -125,6 +135,9 @@ func NewRootCommand(opts Options) *cobra.Command {
 		app.newVolumeCmd(),
 		app.newExposureCmd(),
 		app.newExecCmd(),
+		app.newShellCmd(),
+		app.newCopyCmd(),
+		app.newOpenCmd(),
 		app.newFilesCmd(),
 		app.newTunnelCmd((&net.ListenConfig{}).Listen),
 		app.newPackCmd(),

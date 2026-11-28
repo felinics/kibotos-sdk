@@ -70,28 +70,11 @@ func (a *App) newFilesCmd() *cobra.Command {
 		}
 		return validateByteRange(byteRange)
 	}, func(ctx context.Context, service *kibotos.WorkspacesService, id string, args []string) error {
-		p := a.printer()
-		localFile := len(args) == 2 && args[1] != "-"
-		body, err := service.ReadFile(ctx, id, args[0], kibotos.ReadFileOptions{User: user, Range: byteRange})
-		if err != nil {
-			return err
+		local := "-"
+		if len(args) == 2 {
+			local = args[1]
 		}
-		defer body.Close()
-		if !localFile {
-			_, err = io.Copy(p.Out, body)
-			return err
-		}
-		written, err := saveDownload(args[1], body)
-		if err != nil {
-			return err
-		}
-		if p.IsJSON() {
-			return p.JSON(map[string]any{
-				"path": args[0], "local_path": args[1], "size_bytes": written,
-				"etag": body.Header.Get("ETag"), "content_range": body.Header.Get("Content-Range"),
-			})
-		}
-		return p.ID(args[1])
+		return a.downloadFile(ctx, service, id, args[0], local, kibotos.ReadFileOptions{User: user, Range: byteRange})
 	})
 	get.Flags().StringVar(&byteRange, "range", "", "Byte range, for example bytes=0-1023")
 
@@ -99,35 +82,8 @@ func (a *App) newFilesCmd() *cobra.Command {
 	put := a.fileCmd("put [workspace] [local-file|-] [path]", "Upload a file from disk or stdin", 3,
 		[]fileArgument{{label: "Local file path"}, {label: "Remote destination path", defaultValue: uploadDestination}},
 		func(_ []string) error { return validateFileMode(write.Mode) }, func(ctx context.Context, service *kibotos.WorkspacesService, id string, args []string) error {
-			input := struct{ io.Reader }{a.remainingStdin()}
-			if args[0] != "-" {
-				file, err := os.Open(args[0])
-				if err != nil {
-					return err
-				}
-				defer file.Close()
-				info, err := file.Stat()
-				if err != nil {
-					return err
-				}
-				if info.Mode().IsRegular() && info.Size() > 1<<30 {
-					return usageError("local file %q exceeds the 1 GiB upload limit", args[0])
-				}
-				input.Reader = file
-			}
 			write.User = user
-			result, err := service.WriteFile(ctx, id, args[1], input, write)
-			if err != nil {
-				return err
-			}
-			p := a.printer()
-			if p.IsJSON() {
-				return p.JSON(result)
-			}
-			if p.IsQuiet() {
-				return p.ID(result.Path)
-			}
-			return p.Details([]output.KV{{Key: "Path", Value: result.Path}, {Key: "Bytes", Value: fmt.Sprint(result.SizeBytes)}, {Key: "SHA-256", Value: result.SHA256}})
+			return a.uploadFile(ctx, service, id, args[0], args[1], write)
 		})
 	put.Flags().StringVar(&write.Mode, "mode", "", "Octal permissions, for example 0644")
 	put.Flags().BoolVar(&write.CreateOnly, "create-only", false, "Fail if the destination exists")
@@ -287,6 +243,61 @@ func optionalFileTime(t *time.Time) string {
 		return "-"
 	}
 	return output.FormatTime(*t)
+}
+
+func (a *App) downloadFile(ctx context.Context, service *kibotos.WorkspacesService, id, remote, local string, options kibotos.ReadFileOptions) error {
+	p := a.printer()
+	body, err := service.ReadFile(ctx, id, remote, options)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	if local == "-" {
+		_, err := io.Copy(p.Out, body)
+		return err
+	}
+	written, err := saveDownload(local, body)
+	if err != nil {
+		return err
+	}
+	if p.IsJSON() {
+		return p.JSON(map[string]any{
+			"path": remote, "local_path": local, "size_bytes": written,
+			"etag": body.Header.Get("ETag"), "content_range": body.Header.Get("Content-Range"),
+		})
+	}
+	return p.ID(local)
+}
+
+func (a *App) uploadFile(ctx context.Context, service *kibotos.WorkspacesService, id, local, remote string, write kibotos.WriteFileOptions) error {
+	input := struct{ io.Reader }{a.remainingStdin()}
+	if local != "-" {
+		file, err := os.Open(local)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() && info.Size() > 1<<30 {
+			return usageError("local file %q exceeds the 1 GiB upload limit", local)
+		}
+		input.Reader = file
+	}
+	result, err := service.WriteFile(ctx, id, remote, input, write)
+	if err != nil {
+		return err
+	}
+	p := a.printer()
+	if p.IsJSON() {
+		return p.JSON(result)
+	}
+	if p.IsQuiet() {
+		return p.ID(result.Path)
+	}
+	return p.Details([]output.KV{{Key: "Path", Value: result.Path}, {Key: "Bytes", Value: fmt.Sprint(result.SizeBytes)}, {Key: "SHA-256", Value: result.SHA256}})
 }
 
 func saveDownload(path string, input io.Reader) (int64, error) {

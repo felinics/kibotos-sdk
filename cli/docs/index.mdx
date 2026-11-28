@@ -16,7 +16,7 @@ Download and unpack the archive for your platform, then place `kibo` on your `PA
 ```bash
 tar -xzf kibo_<version>_<os>_<arch>.tar.gz
 sudo mv kibo /usr/local/bin/kibo
-kibo version
+kibo --version
 ```
 
 ### Build from Source
@@ -49,7 +49,7 @@ kibo ws create
 kibo exec -- uname -a
 
 # 5. Expose port 8080 over a temporary HTTPS URL (accepts workspace ID or unique name)
-kibo exp create devbox 8080 --ttl 1h
+kibo open devbox 8080 --ttl 1h
 
 # 6. Clean up when finished (waits until deleted by default; pass --no-wait to return immediately)
 kibo ws delete devbox
@@ -64,19 +64,22 @@ kibo ws delete devbox
 | `kibo whoami` | — | Show active profile, auth type (`user_session` / `api_key`), and live zone check |
 | `kibo org` | `orgs`, `organization`, `organizations` | `list`, `use [id-or-name]` (switch organization for CLI user session) |
 | `kibo profile` | `profiles` | `list`, `use [name]`, `delete [name]` |
-| `kibo workspace` | `ws`, `workspaces` | `list`, `get`, `create`, `desktop`, `update`, `delete`, `start`, `stop`, `timeout`, `network`, `volume attach`, `volume detach`, `volumes set`, `resize`, `packs set`, `metrics`, `wait` |
+| `kibo workspace` | `ws`, `workspaces` | `list`, `get`, `create`, `desktop`, `update`, `delete`, `start`, `stop`, `restart`, `timeout`, `network allow/deny/use-egress/use-resolver`, `volume attach`, `volume detach`, `volumes set`, `resize`, `packs set/add/remove`, `metrics`, `wait` |
 | `kibo desktop` | `kibo ws desktop` | Enable a [workspace's remote desktop](workspaces#remote-desktop) and print its browser URL. Use `--open` to launch it |
 | `kibo volume` | `vol`, `volumes` | `list`, `get`, `create`, `update`, `resize`, `delete`, `wait` |
 | `kibo exposure` | `exp`, `exposures` | `list`, `get`, `create`, `revoke` |
 | `kibo zone` | `zones` | `list` |
 | `kibo template` | `tpl`, `templates` | `list`, `get`, `revisions`, `revision` |
 | `kibo exec` | — | Run a command, stream output, or open a login shell with `-it` |
+| `kibo shell` | — | Open a login shell, with `--start` for a stopped workspace |
+| `kibo cp` | — | Copy a local file to or from a workspace |
+| `kibo open` | — | Reuse or create a temporary HTTPS exposure, then open or print its URL |
 | `kibo files` | — | `ls`, `stat`, `get`, `put`, `mkdir`, `mv`, `rm` |
 | `kibo tunnel` | — | Forward a local TCP listener to a guest port or Unix socket |
 | `kibo pack` | `packs` | `list`, `get` |
 | `kibo egress` | `egresses` | `list`, `get`, `create`, `update`, `delete` |
 | `kibo resolver` | `resolvers` | `list`, `get`, `create`, `update`, `delete` |
-| `kibo version` | — | Print CLI version, Go SDK version, Go runtime, and platform |
+| `kibo version` | `kibo --version`, `kibo -v` | Print CLI version, Go SDK version, Go runtime, and platform. Use `-q` for just the CLI version |
 
 [Workspaces](workspaces) · [Exec, files, and tunnels](exec-files-and-tunnels) · [Packs and networking](packs-and-networking)
 
@@ -103,14 +106,16 @@ In a terminal, `kibo` asks for essential missing inputs on stderr. Pick resource
 
 For scripts and AI agents, supply required arguments and flags with `--no-input --json` or use `-q` to capture IDs. Prompts are disabled when stdin or stderr is a non-TTY, the output format is JSON, or `--no-input`, `-q`, `TERM=dumb`, `CI`, `KIBO_NO_INPUT`, or `KIBOTOS_NO_INPUT` disables them. Missing required inputs fail with exit 2 and a hint before authentication.
 
+A running workspace can be stopped and restarted for a resize, volume update, or Pack change after one `[Y/n]` confirmation. A shell on a stopped workspace offers to start it. Declining cancels before applying changes. Automation must pass `--restart` or `--start` to authorize these transitions.
+
 ## Scripting & JSON Mode
 
 Pass `--json` (or `-o json`, or set `KIBO_OUTPUT=json`) whenever piping output to `jq`, scripts, or AI agents:
 
 - `stdout` contains JSON on success. `exec --stream --json` emits one JSON event per line. `files get --json` requires a local destination and emits download metadata.
-- `desktop --json` returns the browser link in `url`. `desktop -q` prints the URL alone.
+- `desktop --json` and `open --json` include the URL in `url`. Both commands print a bare URL with `-q`. `open` launches a browser only in human output mode unless you pass `--no-open`.
 - Progress updates, interactive login URLs/codes, multi-zone warnings, and structured error envelopes are always written to `stderr`.
-- All async lifecycle commands wait for completion by default; pass `--no-wait` (or `--wait=false`) when you want immediate `202` async return.
+- All async lifecycle commands wait for completion by default; pass `--no-wait` (or `--wait=false`) to skip the final wait. A restart still waits for the workspace to stop before sending the start request.
 
 In `--json` mode, errors are written to `stderr` using a consistent JSON envelope:
 

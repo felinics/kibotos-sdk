@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	kibotos "github.com/felinics/kibotos-sdk/sdks/go"
@@ -38,50 +39,7 @@ func (a *App) resolveWorkspace(
 		if !a.isInteractive() {
 			return "", nil, missingWorkspaceRef()
 		}
-		page, err := collectAllWorkspaces(ctx, client, nil)
-		if err != nil {
-			return "", nil, err
-		}
-		candidates := make([]kibotos.Workspace, 0, len(page.Data))
-		for _, ws := range page.Data {
-			if filter == nil || filter(ws) {
-				candidates = append(candidates, ws)
-			}
-		}
-		if len(candidates) == 0 {
-			if emptyFilterMsg == "" {
-				emptyFilterMsg = "no workspaces found"
-			}
-			return "", nil, &CLIError{
-				ExitCode: ExitError,
-				Code:     "no_matching_workspace",
-				Message:  emptyFilterMsg,
-			}
-		}
-		opts := make([]prompt.Option, 0, len(candidates))
-		byID := make(map[string]kibotos.Workspace, len(candidates))
-		for _, ws := range candidates {
-			byID[ws.ID] = ws
-			label := ws.ID
-			if ws.Name != "" {
-				label = fmt.Sprintf("%s (%s)", ws.Name, ws.ID)
-			}
-			desc := fmt.Sprintf("%s · %s · %s", ws.Status, ws.Zone, ws.Template.ID)
-			opts = append(opts, prompt.Option{
-				Value:       ws.ID,
-				Label:       label,
-				Description: desc,
-			})
-		}
-		if promptTitle == "" {
-			promptTitle = "Select a workspace:"
-		}
-		choice, err := a.prompter().Select(promptTitle, "Workspace", opts, 0)
-		if err != nil {
-			return "", nil, err
-		}
-		ws := byID[choice.Value]
-		return ws.ID, &ws, nil
+		return a.pickWorkspace(ctx, client, filter, emptyFilterMsg, promptTitle, nil)
 	}
 
 	// Fast path for explicit workspace IDs: zero extra round-trips.
@@ -152,6 +110,56 @@ func (a *App) resolveWorkspace(
 			Details:  map[string]any{"candidates": ids},
 		}
 	}
+}
+
+func (a *App) pickWorkspace(ctx context.Context, client *kibotos.Client, filter func(kibotos.Workspace) bool, emptyFilterMsg, promptTitle string, compare func(kibotos.Workspace, kibotos.Workspace) int) (string, *kibotos.Workspace, error) {
+	page, err := collectAllWorkspaces(ctx, client, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	candidates := make([]kibotos.Workspace, 0, len(page.Data))
+	for _, ws := range page.Data {
+		if filter == nil || filter(ws) {
+			candidates = append(candidates, ws)
+		}
+	}
+	if len(candidates) == 0 {
+		if emptyFilterMsg == "" {
+			emptyFilterMsg = "no workspaces found"
+		}
+		return "", nil, &CLIError{
+			ExitCode: ExitError,
+			Code:     "no_matching_workspace",
+			Message:  emptyFilterMsg,
+		}
+	}
+	if compare != nil {
+		slices.SortStableFunc(candidates, compare)
+	}
+	opts := make([]prompt.Option, 0, len(candidates))
+	byID := make(map[string]kibotos.Workspace, len(candidates))
+	for _, ws := range candidates {
+		byID[ws.ID] = ws
+		label := ws.ID
+		if ws.Name != "" {
+			label = fmt.Sprintf("%s (%s)", ws.Name, ws.ID)
+		}
+		desc := fmt.Sprintf("%s · %s · %s", ws.Status, ws.Zone, ws.Template.ID)
+		opts = append(opts, prompt.Option{
+			Value:       ws.ID,
+			Label:       label,
+			Description: desc,
+		})
+	}
+	if promptTitle == "" {
+		promptTitle = "Select a workspace:"
+	}
+	choice, err := a.prompter().Select(promptTitle, "Workspace", opts, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	ws := byID[choice.Value]
+	return ws.ID, &ws, nil
 }
 
 // resolveVolume resolves an optional volume ID or name argument.

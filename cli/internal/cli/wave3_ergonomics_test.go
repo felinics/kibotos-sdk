@@ -475,9 +475,8 @@ func TestWave3GuidedWorkspaceConfig(t *testing.T) {
 			expectedRequest{"GET", workspaceListPath, "", list},
 			expectedRequest{"PATCH", wave3Workspace, `{"resources":{"memory_mib":4096,"disk_mib":20480}}`, stopped},
 		)
-		_, stderr := guidedResult(t, h, "\n\n4096\n8192\n20480\n", ExitOK, "ws", "resize")
-		requireText(t, stderr, "Select a stopped or failed workspace to resize:", "vCPUs [2]:", "Memory (MiB) [2048]:", "Root disk (MiB, grow only) [10240]:", "enter an integer between 10240")
-		rejectText(t, stderr, "busy")
+		_, stderr := guidedResult(t, h, "2\n\n4096\n8192\n20480\n", ExitOK, "ws", "resize")
+		requireText(t, stderr, "Select a workspace to resize:", "busy (wks_busy)", "vCPUs [2]:", "Memory (MiB) [2048]:", "Root disk (MiB, grow only) [10240]:", "enter an integer between 10240")
 	})
 	t.Run("resize with no changes", func(t *testing.T) {
 		h := wave3Harness(t, expectedRequest{"GET", wave3Workspace, "", stopped})
@@ -539,18 +538,17 @@ func TestWave3GuidedWorkspaceConfig(t *testing.T) {
 		}
 	})
 	t.Run("clear Packs on explicit workspace cancelled", func(t *testing.T) {
-		h := wave3Harness(t)
+		h := wave3Harness(t, expectedRequest{"GET", wave3Workspace, "", stopped})
 		_, stderr := guidedResult(t, h, "\n", ExitError, "ws", "packs", "set", "wks_test")
-		requireText(t, stderr, "Clear all Packs on wks_test? [y/N]:", "operation cancelled")
+		requireText(t, stderr, "Clear all Packs on dev (wks_test)? [y/N]:", "operation cancelled")
 	})
 	t.Run("set volumes detach all", func(t *testing.T) {
 		h := wave3Harness(t,
 			expectedRequest{"GET", workspaceListPath, "", list},
 			expectedRequest{"PUT", wave3Workspace + "/volumes", `{"volumes":[]}`, stopped},
 		)
-		_, stderr := guidedResult(t, h, "\ny\n", ExitOK, "ws", "volumes", "set")
-		requireText(t, stderr, "Select a stopped workspace:", "Detach all volumes from dev (wks_test)? [y/N]:")
-		rejectText(t, stderr, "busy")
+		_, stderr := guidedResult(t, h, "2\ny\n", ExitOK, "ws", "volumes", "set")
+		requireText(t, stderr, "Select a running or stopped workspace:", "busy (wks_busy)", "Detach all volumes from dev (wks_test)? [y/N]:")
 	})
 }
 

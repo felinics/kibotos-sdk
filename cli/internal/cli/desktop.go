@@ -196,7 +196,7 @@ func (a *App) newDesktopCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				ws, err = waitForDesktopWorkspace(ctx, client, p, ws, kibotos.WorkspaceStatusStopped, waitDur)
+				ws, err = waitForWorkspaceStatus(ctx, client, p, ws, kibotos.WorkspaceStatusStopped, waitDur)
 				if err != nil {
 					return err
 				}
@@ -209,7 +209,7 @@ func (a *App) newDesktopCmd() *cobra.Command {
 					return err
 				}
 				if shouldWait {
-					ws, err = waitForDesktopWorkspace(ctx, client, p, ws, kibotos.WorkspaceStatusAvailable, waitDur)
+					ws, err = waitForWorkspaceStatus(ctx, client, p, ws, kibotos.WorkspaceStatusAvailable, waitDur)
 					if err != nil {
 						return err
 					}
@@ -271,24 +271,6 @@ func (a *App) confirmDesktopAction(requested bool, message string) (bool, error)
 		return true, nil
 	}
 	return a.prompter().Confirm(message, true)
-}
-
-func waitForDesktopWorkspace(ctx context.Context, client *kibotos.Client, p *output.Printer, ws *kibotos.Workspace, status kibotos.WorkspaceStatus, timeout time.Duration) (*kibotos.Workspace, error) {
-	if ws.Status == status {
-		return ws, nil
-	}
-	id := ws.ID
-	stopSpin := p.StartSpinner(fmt.Sprintf("Waiting for workspace %s to reach %s...", id, status))
-	ready, err := client.Workspaces.Wait(ctx, id, kibotos.WaitWorkspaceParams{
-		Statuses: []kibotos.WorkspaceStatus{status},
-		Timeout:  timeout,
-	})
-	if err != nil {
-		stopSpin(fmt.Sprintf("Workspace %s did not reach %s", id, status), false)
-		return nil, err
-	}
-	stopSpin(fmt.Sprintf("Workspace %s is %s", id, status), true)
-	return ready, nil
 }
 
 func (a *App) openDesktopURL(p *output.Printer, desktopURL string) {

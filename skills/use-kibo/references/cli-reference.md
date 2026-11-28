@@ -105,7 +105,7 @@ Show active profile, auth source, organization, email, API URL, masked key, and 
 
 ### `kibo version`
 
-Show CLI version, Go SDK version, Go runtime, and platform.
+Show CLI version, Go SDK version, Go runtime, and platform. Root options `kibo --version` and `kibo -v` produce the same result. Use `--json` for structured output or `-q` for only the CLI version.
 
 ## Zone Commands
 
@@ -163,15 +163,22 @@ All workspace commands accepting `[id-or-name]` accept either a `wks_...` ID or 
   - Waits by default until deletion completes (`404`) and returns `"status": "deleted"`. Confirms in TTY unless `-y`.
 - `kibo workspace start [id-or-name] [--timeout <dur>] [--timeout-action <stop|delete>] [--no-wait] [--wait-timeout <dur>]`
 - `kibo workspace stop [id-or-name] [--force] [--no-wait] [--wait-timeout <dur>] [-y]`
+- `kibo workspace restart [id-or-name] [--force] [--timeout <dur>] [--timeout-action <stop|delete>] [--no-wait] [--wait-timeout <dur>]`
+  - Always waits for `stopped` before starting again. `--no-wait` skips the final wait for `available`. In a terminal, `--force` asks a default-no confirmation unless `-y` is set.
 - `kibo workspace timeout [id-or-name] --seconds <dur> [--action <stop|delete>]`
 - `kibo workspace network [id-or-name] --mode <public_internet|deny_all> [--no-wait] [--wait-timeout <dur>]`
   - Add repeatable `--allow <IP_OR_CIDR>` and `--deny <IP_OR_CIDR>`, up to one `--egress <egress_id=IP_OR_CIDR[,IP_OR_CIDR...]>`, and up to one `--resolver <resolver_id[=egress_id]>`. The resolver uses a direct path when the egress ID is omitted. Use `--drain-seconds <0..3600>` to control egress connection draining.
   - Updates replace the complete policy. Running workspaces wait by default until `network.applied` is true. Stopped workspaces apply the policy on the next start.
+- `kibo ws network allow|deny [workspace] <ip-or-cidr...> [--remove]` updates the matching address list and deduplicates entries.
+- `kibo ws network use-egress [workspace] [egress] [dest-cidr...] [--clear]` sets or clears the egress rule. Automation requires destination CIDRs when setting it. A terminal can prompt for the destinations with `0.0.0.0/0` as the default.
+- `kibo ws network use-resolver [workspace] [resolver] [--via-egress|--clear]` sets or clears the DNS resolver. `--via-egress` selects the existing workspace egress for DNS. All incremental network commands retain unrelated policy fields and support standard wait flags. Switch to `public_internet` before adding rules in `deny_all` mode.
 - `kibo workspace volume attach [workspace] [volume] --mount /data [--delete-with-workspace]` adds one binding. IDs and names are accepted. In a terminal, omit `--mount` to be prompted for it. The legacy `attach [workspace] --volume <id-or-name> [--mount-path <path>]` form can use the default mount for the first volume. The guided volume picker shows only same-zone, available, unbound volumes.
 - `kibo workspace volume detach [workspace] [volume]` removes one binding when a volume is given. With no volume in a terminal, a single binding is confirmed and multiple bindings open a picker, including **All volumes**. With no volume in automation, detach clears all bindings.
-- `kibo workspace volumes set [workspace] [vol_id:/path...]` replaces all volume bindings. Omitting bindings detaches every volume, with confirmation in a terminal. If the workspace is omitted, the picker shows stopped workspaces.
-- `kibo workspace resize [id-or-name] [--vcpus <n>] [--memory-mib <n>] [--disk-mib <n>]` changes at least one resource. Supply at least one flag in automation. Guided resize uses current values as defaults and sends changed fields. The workspace must be stopped or failed and the root disk can only grow.
-- `kibo workspace packs set [workspace] [pack_id...]` replaces the ordered list for the next start. In a terminal, omit the workspace to choose one and enter up to four Pack IDs separated by commas or spaces. Leave the field blank or pass only a workspace to clear the list. Clearing requires confirmation in a terminal unless `--yes` is set. Automation clears immediately.
+- `kibo workspace volumes set [workspace] [vol_id:/path...]` replaces all volume bindings. Omitting bindings detaches every volume, with confirmation in a terminal. If the workspace is omitted, the picker shows running and stopped workspaces.
+- `kibo workspace resize [id-or-name] [--vcpus <n>] [--memory-mib <n>] [--disk-mib <n>]` changes at least one resource. Supply at least one flag in automation. Guided resize uses current values as defaults and sends changed fields. The root disk can only grow.
+- `kibo workspace packs set [workspace] [pack_id...]` replaces the ordered list for the next start. In a terminal, omit the workspace to choose one and enter up to four Pack IDs separated by commas or spaces. Leave the field blank or pass only a workspace to clear the list. Clearing on a stopped workspace asks for confirmation in a terminal unless `--yes` is set.
+- `kibo ws pack add [workspace] [pack_id]` appends one binding if missing. `kibo ws pack remove [workspace] [pack_id]` removes one existing binding. In a terminal, the Pack picker uses the workspace zone for add and the bound list for remove.
+- Resize and volume commands ask once before stopping, applying the change, and starting a running workspace in a terminal. Pack mutations ask once before saving and restarting a running workspace. Declining cancels before mutation. In automation, pass `--restart` to opt in. `--wait-timeout` applies to each transition. Pack commands also accept `--no-wait` to skip the final wait for `available`.
 - `kibo workspace metrics [id-or-name] [--start <RFC3339>] [--end <RFC3339>]` reads host and guest time series. If both bounds are given, start must precede end. Only the workspace is prompted.
 - `kibo workspace wait [id-or-name] -s|--status <s1,s2> [--timeout <dur>]`
   - `--status` accepts comma-separated values or repeated flags (default `--timeout`: `30s`).
@@ -190,6 +197,8 @@ All workspace commands accepting `[id-or-name]` accept either a `wks_...` ID or 
   - Flags are `--workdir <path>`, repeatable `--env KEY=VALUE`, `--timeout <seconds>`, `--user <user>`, `--stdin <text|->`, and `--stream`. Stdin size is limited to 3 MiB when read with `--stdin -`, and the resulting request must fit the 4 MiB API limit.
   - The default synchronous timeout is 30 seconds and the synchronous maximum is 600 seconds. Use `--stream --timeout <seconds>` for long-running commands. `--stream --json` emits one event per line.
   - `kibo exec [workspace] -it` opens a Bash or sh login shell on a Unix PTY. Add `-- <command> [args...]` for an explicit PTY command. PTY requires terminal stdin and is incompatible with `--stream`, `--stdin`, and JSON.
+- `kibo shell [workspace] [--workdir <path>] [--user <user>] [--env KEY=VALUE] [--start] [--wait-timeout <dur>]` opens a login shell on a Unix PTY. It offers to start a stopped workspace in a terminal. Use `--start` to authorize the transition explicitly.
+- `kibo cp <src> <dst> [--user <user>] [--mode 0644] [--create-only]` copies between a local path and a `workspace:path` operand. A destination directory keeps the source filename. Downloads to `-` stream raw bytes. JSON downloads need a local file. Uploads support `--mode`, `--create-only`, and files up to 1 GiB.
 - `kibo files ls [workspace] [path] [--depth <n>]` lists entries under the path. The default `.` resolves to the selected user's home directory.
 - `kibo files stat [workspace] [path]` shows attributes. `kibo files get [workspace] [path] [local-file|-] [--range bytes=0-1023]` writes bytes to stdout by default. With `--json`, supply a local file to receive metadata.
 - `kibo files put [workspace] [local-file|-] [path] [--mode 0644] [--create-only]` uploads from a local file or stdin. The guided destination defaults to `./<local-filename>` for local files.
@@ -224,6 +233,8 @@ All volume commands accepting `[id-or-name]` accept either a `vol_...` ID or a u
 - `kibo volume wait [id-or-name] -s|--status <s1,s2> [--timeout <dur>]` (default `--timeout`: `30s`)
 
 ## Exposure Commands
+
+`kibo open [workspace] [port] [--ttl <dur>] [--no-open]` reuses an active exposure for the port or creates one. Human output prints and opens the URL unless `--no-open` is set. Quiet output prints the URL alone. JSON returns the exposure object. Both machine modes skip the browser.
 
 ### `kibo exposure` (aliases: `exp`, `exposures`)
 
