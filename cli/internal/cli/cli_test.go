@@ -112,8 +112,8 @@ func TestLoginDeviceFlowAndWhoami(t *testing.T) {
 			writeJSON(w, http.StatusCreated, auth.DeviceStartResponse{
 				DeviceCode:              "dev_code_1",
 				UserCode:                "WXYZ-1234",
-				VerificationURL:         "https://console.kibo.to/device",
-				VerificationURLComplete: "https://console.kibo.to/device?user_code=WXYZ-1234",
+				VerificationURL:         "https://dash.kibo.to/device",
+				VerificationURLComplete: "https://dash.kibo.to/device?user_code=WXYZ-1234",
 				ExpiresIn:               300,
 				Interval:                5,
 			})
@@ -146,7 +146,7 @@ func TestLoginDeviceFlowAndWhoami(t *testing.T) {
 	if !strings.Contains(stderr, "WXYZ-1234") || !strings.Contains(stderr, "user_code=WXYZ-1234") {
 		t.Fatalf("expected user_code and verification URL on stderr, got: %s", stderr)
 	}
-	if len(h.openedURLs) != 1 || h.openedURLs[0] != "https://console.kibo.to/device?user_code=WXYZ-1234" {
+	if len(h.openedURLs) != 1 || h.openedURLs[0] != "https://dash.kibo.to/device?user_code=WXYZ-1234" {
 		t.Fatalf("expected browser to open verification URL once, got %v", h.openedURLs)
 	}
 

@@ -37,7 +37,7 @@ Credential & URL precedence (highest to lowest):
 - **Profile**: `--profile` > `KIBO_PROFILE` > `KIBOTOS_PROFILE` > `current_profile` > `default`
 - **API Key**: `--api-key` > `KIBOTOS_API_KEY` > `KIBO_API_KEY` > active profile `api_key`
 - **API URL**: `--api-url` > `KIBOTOS_API_URL` > `KIBO_API_URL` > active profile `api_url` > `https://api.kibo.to/v1`
-- **Console URL**: `--console-url` > `KIBOTOS_CONSOLE_URL` > `KIBO_CONSOLE_URL` > active profile `console_url` > `https://console.kibo.to`
+- **Console URL**: `--console-url` > `KIBOTOS_CONSOLE_URL` > `KIBO_CONSOLE_URL` > active profile `console_url` > `https://dash.kibo.to`
 
 ## Exit Codes
 
@@ -72,7 +72,7 @@ Authenticate interactively via browser Device Authorization Flow (default) or no
 
 | Flag | Description |
 | --- | --- |
-| `--console-url <url>` | Console base URL for device authorization (default `https://console.kibo.to`) |
+| `--console-url <url>` | Console base URL for device authorization (default `https://dash.kibo.to`) |
 | `--api-url <url>` | Override API base URL stored in the profile |
 | `--profile <name>` | Profile name to save credentials into |
 | `--device-name <label>` | Device label displayed during browser approval (default: hostname) |

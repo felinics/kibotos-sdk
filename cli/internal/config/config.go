@@ -16,7 +16,7 @@ const (
 	// DefaultAPIURL is the default Kibotos v1 API base URL.
 	DefaultAPIURL = kibotos.DefaultBaseURL
 	// DefaultConsoleURL is the default Kibotos web console URL used for CLI login.
-	DefaultConsoleURL = "https://console.kibo.to"
+	DefaultConsoleURL = "https://dash.kibo.to"
 	// DefaultProfileName is the default profile name when none is specified.
 	DefaultProfileName = "default"
 )

@@ -19,11 +19,11 @@ func TestNormalizeConsoleURL(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"https://console.kibo.to", "https://console.kibo.to", false},
-		{"https://console.kibo.to/", "https://console.kibo.to", false},
-		{"https://console.kibo.to/api", "https://console.kibo.to", false},
+		{"https://dash.kibo.to", "https://dash.kibo.to", false},
+		{"https://dash.kibo.to/", "https://dash.kibo.to", false},
+		{"https://dash.kibo.to/api", "https://dash.kibo.to", false},
 		{"http://localhost:5173/api/", "http://localhost:5173", false},
-		{"ftp://console.kibo.to", "", true},
+		{"ftp://dash.kibo.to", "", true},
 		{"", "", true},
 	}
 
@@ -66,8 +66,8 @@ func TestDeviceClientStartAndPollApproved(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(DeviceStartResponse{
 				DeviceCode:              "dev_secret_123",
 				UserCode:                "ABCD-EFGH",
-				VerificationURL:         "https://console.kibo.to/device",
-				VerificationURLComplete: "https://console.kibo.to/device?user_code=ABCD-EFGH",
+				VerificationURL:         "https://dash.kibo.to/device",
+				VerificationURLComplete: "https://dash.kibo.to/device?user_code=ABCD-EFGH",
 				ExpiresIn:               600,
 				Interval:                5,
 			})

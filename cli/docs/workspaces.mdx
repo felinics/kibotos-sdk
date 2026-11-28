@@ -61,7 +61,7 @@ kibo desktop wks_123 --no-input -q
 
 Desktop waits for a requested start or restart to reach `available` by default. Use `--wait-timeout` to set the wait limit. With `--no-wait`, a restart still waits for the stop before sending the start request. `--open` launches the browser once the command has an available workspace and any required restart has been performed.
 
-The browser URL uses `<console-url>/desktop/<workspace-id>` and includes `?org=<organization-id>` when the organization is known from the active profile or an override. The console base resolves from `--console-url`, `KIBOTOS_CONSOLE_URL`, `KIBO_CONSOLE_URL`, the profile's `console_url`, or the default `https://console.kibo.to`, in that order.
+The browser URL uses `<console-url>/desktop/<workspace-id>` and includes `?org=<organization-id>` when the organization is known from the active profile or an override. The console base resolves from `--console-url`, `KIBOTOS_CONSOLE_URL`, `KIBO_CONSOLE_URL`, the profile's `console_url`, or the default `https://dash.kibo.to`, in that order.
 
 `kibo desktop --json` returns `workspace_id`, `status`, `desktop_enabled`, `pack_id`, `restart_required`, and `url`. When it attaches the Pack to an available workspace and leaves it running, `restart_required` is `true`. Quiet mode prints just the URL. For `ws create --desktop`, JSON returns the workspace object and quiet mode prints the workspace ID.
 

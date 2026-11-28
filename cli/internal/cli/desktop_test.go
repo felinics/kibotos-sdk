@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	desktopTestURL = "https://console.kibo.to/desktop/wks_test"
+	desktopTestURL = "https://dash.kibo.to/desktop/wks_test"
 	desktopCatalog = `{"data":[{"id":"kibotos-desktop-env","provided_capabilities":["desktop.v1"]}]}`
 	desktopBinding = `,"packs":[{"id":"kibotos-desktop-env","provided_capabilities":["desktop.v1"]}]}`
 	desktopReady   = `{"id":"wks_test","name":"dev","status":"available","zone":"global-1"` + desktopBinding
@@ -305,7 +305,7 @@ func TestDesktopNameResolution(t *testing.T) {
 	requireText(t, stderr, "ambiguous_name", "wks_test", "wks_exact")
 
 	h = wave3Harness(t, expectedRequest{"GET", workspaceListPath, "", `{"data":[` + exact + `]}`})
-	if stdout := expectSuccess(t, h, "desktop", "DEV", "-q"); stdout != "https://console.kibo.to/desktop/wks_exact\n" {
+	if stdout := expectSuccess(t, h, "desktop", "DEV", "-q"); stdout != "https://dash.kibo.to/desktop/wks_exact\n" {
 		t.Fatalf("folded name URL = %q", stdout)
 	}
 }

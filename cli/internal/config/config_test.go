@@ -81,7 +81,7 @@ func TestStoreSaveAndLoadPermissions(t *testing.T) {
 			"prod": {
 				APIKey:           "kb_1234567890abcdef",
 				APIURL:           "https://api.kibo.to/v1",
-				ConsoleURL:       "https://console.kibo.to",
+				ConsoleURL:       "https://dash.kibo.to",
 				OrganizationID:   "org_123",
 				OrganizationName: "Acme",
 				UserEmail:        "alice@acme.com",
@@ -125,7 +125,7 @@ func TestResolvePrecedence(t *testing.T) {
 			"default": {
 				APIKey:           "kb_default_key_1111",
 				APIURL:           "https://default.kibo.to/v1",
-				ConsoleURL:       "https://default-console.kibo.to",
+				ConsoleURL:       "https://default-dash.kibo.to",
 				OrganizationID:   "org_def",
 				OrganizationName: "Default Org",
 				UserEmail:        "def@example.com",
@@ -134,7 +134,7 @@ func TestResolvePrecedence(t *testing.T) {
 			"staging": {
 				APIKey:           "kb_staging_key_2222",
 				APIURL:           "https://staging.kibo.to/v1",
-				ConsoleURL:       "https://staging-console.kibo.to",
+				ConsoleURL:       "https://staging-dash.kibo.to",
 				OrganizationID:   "org_stg",
 				OrganizationName: "Staging Org",
 				UserEmail:        "stg@example.com",

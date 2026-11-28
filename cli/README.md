@@ -53,7 +53,7 @@ Resolution precedence (highest to lowest):
    - Console URL: `KIBOTOS_CONSOLE_URL` > `KIBO_CONSOLE_URL`
    - Profile: `KIBO_PROFILE` > `KIBOTOS_PROFILE`
 3. Active profile in `config.json` (`current_profile`, defaulting to `default`)
-4. Defaults: API `https://api.kibo.to/v1`, Console `https://console.kibo.to`
+4. Defaults: API `https://api.kibo.to/v1`, Console `https://dash.kibo.to`
 
 ## Quick Start
 
