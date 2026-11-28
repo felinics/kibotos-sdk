@@ -32,6 +32,7 @@ with Kibotos() as client:
 | --- | --- | --- |
 | `id` | `str` | Zone identifier (e.g. `"global-1"`). |
 | `display_name` | `str` | Human-readable zone name. |
+| `description` | `str \| None` | Optional human-readable description (up to 200 characters), or `None` when unspecified. |
 | `region` | `str` | Geographic region label. |
 | `country` | `str \| None` | ISO 3166-1 alpha-2 uppercase country/region code (e.g. `"JP"`, `"US"`), or `None` when unspecified. |
 | `status` | `ZoneStatus` (`"available" \| "draining" \| str`) | Zone operational status. |

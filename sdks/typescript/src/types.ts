@@ -126,6 +126,8 @@ export type ZoneStatus = 'available' | 'draining';
 export interface Zone {
   id: string;
   display_name: string;
+  /** Optional human-readable description (up to 200 characters), or `null` when unspecified. */
+  description?: string | null;
   region: string;
   /** ISO 3166-1 alpha-2 uppercase country/region code (e.g. `"JP"`, `"US"`), or `null` when unspecified. */
   country: string | null;
@@ -329,7 +331,7 @@ export interface WaitWorkspaceParams {
 // Exposures
 // ---------------------------------------------------------------------------
 
-export type ExposureStatus = 'active' | 'revoked' | 'expired';
+export type ExposureStatus = 'active' | 'revoked';
 
 export interface Exposure {
   id: string;

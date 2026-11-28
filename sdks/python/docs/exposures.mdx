@@ -33,7 +33,7 @@ with Kibotos() as client:
 | `workspace_id` | `str` | Owning workspace ID. |
 | `port` | `int` | Exposed workspace TCP port. |
 | `url` | `str` | Public HTTPS URL routing to the workspace port. |
-| `status` | `ExposureStatus` (`"active" \| "revoked" \| "expired" \| str`) | Current exposure state. |
+| `status` | `ExposureStatus` (`"active" \| "revoked" \| str`) | Current exposure state. |
 | `expires_at` | `datetime` | Expiration timestamp. |
 | `revoked_at` | `datetime \| None` | Revocation timestamp, or `None` if not revoked. |
 | `created_at` | `datetime` | Creation timestamp. |

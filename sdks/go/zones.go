@@ -19,6 +19,7 @@ const (
 type Zone struct {
 	ID          string     `json:"id"`
 	DisplayName string     `json:"display_name"`
+	Description *string    `json:"description"`
 	Region      string     `json:"region"`
 	Country     *string    `json:"country"`
 	Status      ZoneStatus `json:"status"`

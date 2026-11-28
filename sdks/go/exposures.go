@@ -16,7 +16,6 @@ type ExposureStatus string
 const (
 	ExposureStatusActive  ExposureStatus = "active"
 	ExposureStatusRevoked ExposureStatus = "revoked"
-	ExposureStatusExpired ExposureStatus = "expired"
 )
 
 // Exposure represents a temporary HTTPS exposure for a workspace port.

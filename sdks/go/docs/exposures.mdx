@@ -30,7 +30,7 @@ fmt.Printf("Exposure %s -> %s (expires %s)\n", exp.ID, exp.URL, exp.ExpiresAt)
 | `WorkspaceID` | `string` | Owning workspace ID. |
 | `Port` | `int` | Exposed TCP port. |
 | `URL` | `string` | Temporary public HTTPS URL. |
-| `Status` | `ExposureStatus` | `ExposureStatusActive`, `ExposureStatusRevoked`, or `ExposureStatusExpired`. |
+| `Status` | `ExposureStatus` | `ExposureStatusActive` or `ExposureStatusRevoked`. |
 | `ExpiresAt` | `time.Time` | Expiration timestamp. |
 | `RevokedAt` | `*time.Time` | Revocation timestamp, or `nil` if not revoked. |
 | `CreatedAt` | `time.Time` | Creation timestamp. |

@@ -275,19 +275,29 @@ components:
       properties:
         labels:
           additionalProperties:
-            type: string
+            type:
+              - string
+              - "null"
+          description: Labels Values replace existing labels. A null value deletes the label.
           type: object
         name:
-          type: string
+          type:
+            - string
+            - "null"
       type: object
     openapi.UpdateWorkspaceRequest:
       properties:
         labels:
           additionalProperties:
-            type: string
+            type:
+              - string
+              - "null"
+          description: Labels Values replace existing labels. A null value deletes the label.
           type: object
         name:
-          type: string
+          type:
+            - string
+            - "null"
       type: object
     openapi.Volume:
       properties:
@@ -543,6 +553,12 @@ components:
         default:
           example: true
           type: boolean
+        description:
+          example: Tokyo, Japan
+          maxLength: 200
+          type:
+            - string
+            - "null"
         display_name:
           example: Global 1
           type: string

@@ -48,7 +48,7 @@ VolumeStatus = (
     ]
     | str
 )
-ExposureStatus = Literal["active", "revoked", "expired"] | str
+ExposureStatus = Literal["active", "revoked"] | str
 NetworkMode = Literal["public_internet", "deny_all"] | str
 TimeoutAction = Literal["stop", "delete"] | str
 
@@ -66,6 +66,7 @@ class Zone(KibotosModel):
 
     id: str
     display_name: str
+    description: str | None = None
     region: str
     country: str | None = None
     status: ZoneStatus

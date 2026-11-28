@@ -35,7 +35,7 @@ for z, err := range client.Zones.Iter(ctx, nil) {
 }
 ```
 
-`ZoneStatus` constants: `ZoneStatusAvailable` (`"available"`) and `ZoneStatusDraining` (`"draining"`). `Zone.Country` (`*string`) holds the ISO 3166-1 alpha-2 uppercase country/region code (e.g. `"JP"`, `"US"`), or `nil` when unspecified.
+`ZoneStatus` constants: `ZoneStatusAvailable` (`"available"`) and `ZoneStatusDraining` (`"draining"`). `Zone.Description` (`*string`) holds an optional human-readable description (up to 200 characters), and `Zone.Country` (`*string`) holds the ISO 3166-1 alpha-2 uppercase country/region code (e.g. `"JP"`, `"US"`), or `nil` when unspecified.
 
 ## Templates
 

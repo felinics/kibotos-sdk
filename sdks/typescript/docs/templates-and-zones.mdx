@@ -42,6 +42,7 @@ for await (const zone of client.zones.iterate()) {
 | --- | --- | --- |
 | `id` | `string` | Zone identifier (e.g. `'global-1'`). |
 | `display_name` | `string` | Human-readable zone name. |
+| `description` | `string \| null` | Optional human-readable description (up to 200 characters), or `null` when unspecified. |
 | `region` | `string` | Geographic region label. |
 | `country` | `string \| null` | ISO 3166-1 alpha-2 uppercase country/region code (e.g. `'JP'`, `'US'`), or `null` when unspecified. |
 | `status` | `'available' \| 'draining'` | Operational availability of the zone. |

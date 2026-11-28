@@ -1,4 +1,4 @@
-"""Shared test fixtures matching openapi/v1-contract.md."""
+"""Shared test fixtures matching openapi/v1.yaml."""
 
 from __future__ import annotations
 
