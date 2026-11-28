@@ -1,9 +1,9 @@
 ---
 title: use-kibo Agent Skill
-description: Install and use the official use-kibo Agent Skill so Claude Code, Codex, Cursor, and Antigravity operate Kibo reliably via the kibo CLI.
+description: Install and use the official use-kibo Agent Skill so Claude Code, Codex, Cursor, and Antigravity operate Kibotos reliably via the kibo CLI.
 ---
 
-**`use-kibo`** is the official Agent Skill for **Kibotos** (Kibo), located at `skills/use-kibo/` in the `felinics/kibotos-sdk` repository. It teaches AI coding agents how to verify authentication, drive `kibo` safely with `--json` and `--wait`, parse structured errors and exit codes, protect API keys, and confirm destructive operations.
+**`use-kibo`** is the official Agent Skill for **Kibotos**, located at `skills/use-kibo/` in the `felinics/kibotos-sdk` repository. It teaches AI coding agents how to verify authentication, drive `kibo` with explicit arguments and `--no-input --json`, parse structured errors and exit codes, protect API keys, and confirm destructive operations.
 
 ## What `use-kibo` Includes
 
@@ -18,10 +18,10 @@ skills/use-kibo/
 When loaded, `use-kibo` instructs agents to:
 
 1. **Preflight with `kibo whoami --json`** before creating or mutating resources, guiding the user through `kibo login` (or `KIBOTOS_API_KEY`) on exit code `3` instead of guessing credentials.
-2. **Always pass `--json` (or `-o json`)** so `stdout` is strictly valid JSON while progress updates and structured errors stay on `stderr`.
-3. **Always pass `--wait`** on asynchronous lifecycle commands (`workspace create|start|stop|delete|network`, `volume create|resize|delete`).
+2. **Provide all required inputs with `--no-input --json`**. Results go to stdout, including one JSON event per line for streaming exec. Errors and progress go to stderr. Use a local destination with `files get --json`. Use `-q` for bare IDs.
+3. **Wait for asynchronous lifecycle commands by default**. Use `--no-wait` when you plan to wait separately.
 4. **Act on exit codes and `error.retryable`** (`0` success, `1` API/runtime error, `2` usage error, `3` unauthenticated).
-5. **Protect secrets and confirm destructive actions** before deleting workspaces/volumes, force-stopping, or revoking live exposures.
+5. **Protect secrets and confirm intent for destructive actions** such as deleting resources or files, force-stopping, revoking live exposures, or clearing bindings. Automation skips terminal confirmations.
 
 ## Prerequisite: Install & Authenticate `kibo`
 
@@ -91,7 +91,8 @@ rm -rf /tmp/kibotos-sdk
 
 Once `use-kibo` is installed, ask your agent naturally:
 
-- *"Spin up a Kibo `python-3.12` workspace with 2 vCPUs, 4 GiB RAM, and a 1-hour auto-stop timeout, wait until it's available, and expose port 8080."*
-- *"Create a 50 GiB persistent Kibo volume in `global-1`, attach it at `/data` to a new workspace, and return the workspace ID."*
+- *"Spin up a Kibotos `python-3.12` workspace with 2 vCPUs, 4 GiB RAM, and a 1-hour auto-stop timeout, wait until it's available, and expose port 8080."*
+- *"Create a 50 GiB persistent Kibotos volume in `global-1`, attach it at `/data` to a new workspace, and return the workspace ID."*
 - *"Lock down outbound internet access (`deny_all`) on workspace `wks_...` and confirm the policy is applied."*
-- *"List all available Kibo workspaces labeled `env=staging` and check their auto-timeout expiry."*
+- *"List all available Kibotos workspaces labeled `env=staging` and check their auto-timeout expiry."*
+- *"Run `uname -a` in workspace `wks_123` and return its exit status and output."*

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -13,33 +14,56 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func (a *App) newTunnelCmd() *cobra.Command {
+func (a *App) newTunnelCmd(listenTCP func(context.Context, string, string) (net.Listener, error)) *cobra.Command {
 	var target kibotos.TunnelOptions
 	var listen string
 	cmd := &cobra.Command{
-		Use:   "tunnel <workspace>",
+		Use:   "tunnel [workspace] [port]",
 		Short: "Forward a local TCP listener to a workspace TCP port or Unix socket",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			remote := cmd.Flags().Changed("remote")
 			unixPath := cmd.Flags().Changed("unix-path")
-			if remote == unixPath || (remote && (target.Port < 1 || target.Port > 65535)) ||
-				(unixPath && !strings.HasPrefix(target.UnixPath, "/")) {
+			if remote && unixPath || remote && (target.Port < 1 || target.Port > 65535) ||
+				unixPath && (!strings.HasPrefix(target.UnixPath, "/") || strings.ContainsRune(target.UnixPath, 0)) {
 				return usageError("specify either --remote with a port from 1 to 65535 or --unix-path with an absolute guest path")
 			}
-			if target.Family != "" && (!remote || (target.Family != "ipv4" && target.Family != "ipv6")) {
-				return usageError("--family requires --remote and must be ipv4 or ipv6")
+			if len(args) == 2 {
+				if err := validatePort(args[1]); err != nil {
+					return usageError("invalid guest port %q: %v", args[1], err)
+				}
+				port, _ := strconv.Atoi(args[1])
+				if unixPath || remote && target.Port != port {
+					return usageError("positional port conflicts with --remote or --unix-path")
+				}
+				target.Port = port
 			}
-			if _, _, err := net.SplitHostPort(listen); err != nil {
-				return usageError("invalid --listen address: %v", err)
+			if target.Family != "" && (unixPath || (target.Family != "ipv4" && target.Family != "ipv6")) {
+				return usageError("--family requires a TCP target and must be ipv4 or ipv6")
+			}
+			_, localPort, err := net.SplitHostPort(listen)
+			if err != nil {
+				return usageError("invalid --listen address %q: expected host:port", listen)
+			}
+			if _, err := net.LookupPort("tcp", localPort); err != nil {
+				return usageError("invalid --listen port %q", localPort)
+			}
+			if target.Port == 0 && !unixPath && !a.isInteractive() {
+				return usageErrorWithHint("Pass a positional guest port, --remote <port>, or --unix-path </path>.", "tunnel target is required")
 			}
 			ctx := cmd.Context()
-			client, id, err := a.workspaceDataClient(ctx, args[0])
+			client, id, err := a.resolveAvailableWorkspace(ctx, firstArg(args))
 			if err != nil {
 				return err
 			}
-			var lc net.ListenConfig
-			listener, err := lc.Listen(ctx, "tcp", listen)
+			if target.Port == 0 && !unixPath {
+				port, err := a.prompter().Input("Guest port to forward (1-65535)", "8080", validatePort)
+				if err != nil {
+					return err
+				}
+				target.Port, _ = strconv.Atoi(port)
+			}
+			listener, err := listenTCP(ctx, "tcp", listen)
 			if err != nil {
 				return err
 			}

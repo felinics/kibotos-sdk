@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -44,16 +45,8 @@ func (a *App) newExposureListCmd() *cobra.Command {
 				return err
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, _, err := a.resolveWorkspace(ctx, client, ref, nil, "no workspaces found", "Select a workspace:")
+			client, wsID, _, err := a.resolveCommandWorkspace(ctx, firstArg(args), nil, "", "Select a workspace:")
 			if err != nil {
 				return err
 			}
@@ -120,29 +113,39 @@ func (a *App) newExposureListCmd() *cobra.Command {
 	return cmd
 }
 
+func (a *App) resolveCommandExposure(ctx context.Context, args []string, includeRevoked bool, title string) (*kibotos.Client, string, string, *kibotos.Exposure, error) {
+	wsRef, expRef := firstArg(args), ""
+	if len(args) > 1 {
+		expRef = args[1]
+	}
+	if !a.isInteractive() {
+		if strings.TrimSpace(wsRef) == "" {
+			return nil, "", "", nil, missingWorkspaceRef()
+		}
+		if strings.TrimSpace(expRef) == "" {
+			return nil, "", "", nil, missingExposureRef()
+		}
+	}
+	client, _, err := a.requireClient()
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	wsID, _, err := a.resolveWorkspace(ctx, client, wsRef, nil, "", "Select a workspace:")
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	expID, exp, err := a.resolveExposure(ctx, client, wsID, expRef, includeRevoked, title)
+	return client, wsID, expID, exp, err
+}
+
 func (a *App) newExposureGetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "get [workspace] [exposure_id]",
 		Short: "Get details of an HTTPS port exposure",
 		Args:  cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			wsRef, expRef := "", ""
-			if len(args) > 0 {
-				wsRef = args[0]
-			}
-			if len(args) > 1 {
-				expRef = args[1]
-			}
-			wsID, _, err := a.resolveWorkspace(ctx, client, wsRef, nil, "no workspaces found", "Select a workspace:")
-			if err != nil {
-				return err
-			}
-			expID, _, err := a.resolveExposure(ctx, client, wsID, expRef, true, "Select an exposure to inspect:")
+			client, wsID, expID, _, err := a.resolveCommandExposure(ctx, args, true, "Select an exposure to inspect:")
 			if err != nil {
 				return err
 			}
@@ -196,17 +199,9 @@ func (a *App) newExposureCreateCmd() *cobra.Command {
 				}
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			wsRef := ""
-			if len(args) > 0 {
-				wsRef = args[0]
-			}
-			wsID, _, err := a.resolveWorkspace(
-				ctx, client, wsRef,
+			client, wsID, _, err := a.resolveCommandWorkspace(
+				ctx, firstArg(args),
 				func(w kibotos.Workspace) bool { return w.Status == kibotos.WorkspaceStatusAvailable },
 				"no available workspaces found to expose",
 				"Select an available workspace:",
@@ -252,23 +247,8 @@ func (a *App) newExposureRevokeCmd() *cobra.Command {
 		Short: "Revoke an active HTTPS port exposure",
 		Args:  cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			wsRef, expRef := "", ""
-			if len(args) > 0 {
-				wsRef = args[0]
-			}
-			if len(args) > 1 {
-				expRef = args[1]
-			}
-			wsID, _, err := a.resolveWorkspace(ctx, client, wsRef, nil, "no workspaces found", "Select a workspace:")
-			if err != nil {
-				return err
-			}
-			expID, picked, err := a.resolveExposure(ctx, client, wsID, expRef, false, "Select an active exposure to revoke:")
+			client, wsID, expID, picked, err := a.resolveCommandExposure(ctx, args, false, "Select an active exposure to revoke:")
 			if err != nil {
 				return err
 			}

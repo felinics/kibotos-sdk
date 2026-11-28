@@ -3,7 +3,7 @@ title: kibo CLI
 description: Install kibo, run your first commands, and learn global flags, JSON output, and exit codes for the official Kibotos CLI.
 ---
 
-`kibo` is the official command-line interface for **Kibotos** (Kibo). Provision and manage cloud microVM workspaces, persistent volumes, and temporary HTTPS port exposures from your terminal, CI pipelines, or AI coding agents.
+`kibo` is the official command-line interface for **Kibotos**. Manage workspaces, run commands, transfer files, open tunnels, and configure volumes, Packs, exposures, and networking from your terminal, CI pipeline, or AI agent.
 
 ## Installation
 
@@ -42,8 +42,11 @@ kibo whoami
 kibo zone list
 kibo template list
 
-# 4. Create a workspace interactively, or pass flags directly (waits until available by default)
-kibo ws create -t python-3.12 -n devbox --timeout 1h --timeout-action stop
+# 4. Choose a template and enter devbox as the workspace name
+kibo ws create
+
+# Choose the workspace and run this command
+kibo exec -- uname -a
 
 # 5. Expose port 8080 over a temporary HTTPS URL (accepts workspace ID or unique name)
 kibo exp create devbox 8080 --ttl 1h
@@ -61,12 +64,20 @@ kibo ws delete devbox
 | `kibo whoami` | — | Show active profile, auth type (`user_session` / `api_key`), and live zone check |
 | `kibo org` | `orgs`, `organization`, `organizations` | `list`, `use [id-or-name]` (switch organization for CLI user session) |
 | `kibo profile` | `profiles` | `list`, `use [name]`, `delete [name]` |
-| `kibo workspace` | `ws`, `workspaces` | `list`, `get`, `create`, `update`, `delete`, `start`, `stop`, `timeout`, `network`, `volume attach\|detach`, `wait` |
+| `kibo workspace` | `ws`, `workspaces` | `list`, `get`, `create`, `update`, `delete`, `start`, `stop`, `timeout`, `network`, `volume attach`, `volume detach`, `volumes set`, `resize`, `packs set`, `metrics`, `wait` |
 | `kibo volume` | `vol`, `volumes` | `list`, `get`, `create`, `update`, `resize`, `delete`, `wait` |
 | `kibo exposure` | `exp`, `exposures` | `list`, `get`, `create`, `revoke` |
 | `kibo zone` | `zones` | `list` |
 | `kibo template` | `tpl`, `templates` | `list`, `get`, `revisions`, `revision` |
+| `kibo exec` | — | Run a command, stream output, or open a login shell with `-it` |
+| `kibo files` | — | `ls`, `stat`, `get`, `put`, `mkdir`, `mv`, `rm` |
+| `kibo tunnel` | — | Forward a local TCP listener to a guest port or Unix socket |
+| `kibo pack` | `packs` | `list`, `get` |
+| `kibo egress` | `egresses` | `list`, `get`, `create`, `update`, `delete` |
+| `kibo resolver` | `resolvers` | `list`, `get`, `create`, `update`, `delete` |
 | `kibo version` | — | Print CLI version, Go SDK version, Go runtime, and platform |
+
+[Workspaces](workspaces) · [Exec, files, and tunnels](exec-files-and-tunnels) · [Packs and networking](packs-and-networking)
 
 ## Global Flags
 
@@ -81,19 +92,21 @@ Available on every `kibo` command:
 | `-y`, `--yes` | `false` | Skip interactive confirmation prompts on destructive actions. |
 | `--no-color` | `false` | Disable colored output (also respects `NO_COLOR`). |
 | `--profile <name>` | active profile | Named profile from `config.json` to use for this command. |
+| `--org <id>` | active profile org | Override the target organization ID (`X-Kibotos-Organization`, env: `KIBO_ORG` / `KIBOTOS_ORG`). |
 | `--api-key <key>` | — | Override the Kibotos API key (`kb_...`) for this invocation. |
 | `--api-url <url>` | `https://api.kibo.to/v1` | Override the Kibotos v1 API base URL. |
 
 ## Interactive vs. Non-Interactive Mode
 
-- **Interactive terminal (TTY)**: Missing required flags or resource IDs open minimal inline arrow-key selectors (`↑`/`↓` + `Enter`, e.g., `kibo ws create`, `kibo ws stop`, `kibo exp create`), async commands wait by default with a progress spinner on `stderr`, and destructive commands ask `[y/N]` confirmation unless `-y` is passed.
-- **Non-interactive (Agents, CI, pipes, `--json`, `-q`, `--no-input`, `CI=true`, `KIBO_NO_INPUT=1`)**: Prompts are automatically disabled so commands never hang on `stdin`. Missing inputs fail immediately with exit code `2` and actionable hints.
+In a terminal, `kibo` asks for essential missing inputs on stderr. Pick resources with the arrow keys and Enter. Use `--yes` to skip destructive confirmations and supply any known inputs to skip their questions.
+
+For scripts and AI agents, supply required arguments and flags with `--no-input --json` or use `-q` to capture IDs. Prompts are disabled when stdin or stderr is a non-TTY, the output format is JSON, or `--no-input`, `-q`, `TERM=dumb`, `CI`, `KIBO_NO_INPUT`, or `KIBOTOS_NO_INPUT` disables them. Missing required inputs fail with exit 2 and a hint before authentication.
 
 ## Scripting & JSON Mode
 
 Pass `--json` (or `-o json`, or set `KIBO_OUTPUT=json`) whenever piping output to `jq`, scripts, or AI agents:
 
-- `stdout` contains **strictly valid JSON** on success.
+- `stdout` contains JSON on success. `exec --stream --json` emits one JSON event per line. `files get --json` requires a local destination and emits download metadata.
 - Progress updates, interactive login URLs/codes, multi-zone warnings, and structured error envelopes are always written to `stderr`.
 - All async lifecycle commands wait for completion by default; pass `--no-wait` (or `--wait=false`) when you want immediate `202` async return.
 
@@ -121,3 +134,5 @@ In `--json` mode, errors are written to `stderr` using a consistent JSON envelop
 | `1` | API or runtime error | Inspect `stderr` (`error.code`, `error.retryable`, `error.request_id`). Retry briefly if `retryable` is `true`. |
 | `2` | Usage, argument, or flag validation error | Fix command flags or arguments before retrying. |
 | `3` | Unauthenticated (no credentials or HTTP `401`) | Run `kibo login` or configure `KIBOTOS_API_KEY`. |
+
+`exec` also forwards the remote process status, including `124` for a timeout and `128 + signal` for signal termination.

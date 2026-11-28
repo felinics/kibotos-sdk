@@ -35,21 +35,25 @@ func processResult(result kibotos.ProcessExit) error {
 }
 
 func (a *App) newExecCmd() *cobra.Command {
-	var req kibotos.ExecRequest
+	var flags kibotos.ExecRequest
 	var env []string
 	var stdin string
 	var stream, interactive, tty bool
 	cmd := &cobra.Command{
-		Use:   "exec <workspace> [flags] -- <command> [args...]",
+		Use:   "exec [workspace] [flags] [-- command [args...]]",
 		Short: "Run a command inside a workspace",
-		Args: func(cmd *cobra.Command, args []string) error {
-			if cmd.ArgsLenAtDash() != 1 || len(args) < 2 || args[1] == "" {
-				return usageError("expected a workspace and a command after --")
-			}
-			return nil
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			req.Argv = args[1:]
+			req := flags
+			dash := cmd.ArgsLenAtDash()
+			workspaceArgs := args
+			if dash >= 0 {
+				workspaceArgs = args[:dash]
+				req.Argv = args[dash:]
+			}
+			if len(workspaceArgs) > 1 || (dash >= 0 && (len(req.Argv) == 0 || req.Argv[0] == "")) {
+				return missingExecCommand()
+			}
+			ref := firstArg(workspaceArgs)
 			var err error
 			req.Env, err = parseExecEnv(env)
 			if err != nil {
@@ -64,6 +68,17 @@ func (a *App) newExecCmd() *cobra.Command {
 			if interactive != tty {
 				return usageError("use -it to open an interactive terminal")
 			}
+			prompting := a.isInteractive()
+			if strings.TrimSpace(ref) == "" && !prompting {
+				return missingWorkspaceRef()
+			}
+			if len(req.Argv) == 0 {
+				if tty {
+					req.Argv = []string{"/bin/sh", "-lc", "if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh -l; fi"}
+				} else if !prompting {
+					return missingExecCommand()
+				}
+			}
 			var terminal *os.File
 			if tty {
 				if stream || cmd.Flags().Changed("stdin") || a.printer().IsJSON() {
@@ -71,37 +86,41 @@ func (a *App) newExecCmd() *cobra.Command {
 				}
 				file, ok := a.stdin.(*os.File)
 				if !ok || !term.IsTerminal(int(file.Fd())) {
-					return usageError("-it requires a terminal on stdin")
+					return usageErrorWithHint("Run with terminal stdin, or pass -- <command> without -it.", "-it requires a terminal on stdin")
 				}
 				terminal = file
 			}
-			if cmd.Flags().Changed("stdin") {
-				if stdin == "-" {
-					// Leave room for JSON encoding and the other request fields.
-					const maxStdin = 3 << 20
-					data, err := io.ReadAll(io.LimitReader(a.stdin, maxStdin+1))
-					if err != nil {
-						return err
-					}
-					if len(data) > maxStdin {
-						return usageError("--stdin - exceeds the 3 MiB input limit")
-					}
-					stdin = string(data)
-				}
-				req.Stdin = &stdin
-				payload, err := json.Marshal(req)
-				if err != nil {
+			hasStdin := cmd.Flags().Changed("stdin")
+			// A workspace name can still need a picker for ambiguous matches.
+			deferStdin := hasStdin && prompting && stdin == "-" &&
+				(len(req.Argv) == 0 || !strings.HasPrefix(strings.TrimSpace(ref), "wks_"))
+			if hasStdin && !deferStdin {
+				if err := setExecStdin(&req, stdin, a.stdin); err != nil {
 					return err
 				}
-				if len(payload) > 4<<20 {
-					return usageError("exec JSON request with --stdin exceeds the 4 MiB API limit")
-				}
 			}
-			client, id, err := a.workspaceDataClient(cmd.Context(), args[0])
+			ctx := cmd.Context()
+			client, id, err := a.resolveAvailableWorkspace(ctx, ref)
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
+			promptedCommand := len(req.Argv) == 0
+			if promptedCommand {
+				command, err := a.prompter().Input("Command", "", validateNonEmpty)
+				if err != nil {
+					return err
+				}
+				req.Argv = []string{"/bin/sh", "-c", command}
+			}
+			if deferStdin {
+				if err := setExecStdin(&req, stdin, a.remainingStdin()); err != nil {
+					return err
+				}
+			} else if hasStdin && promptedCommand {
+				if err := validateExecPayload(req); err != nil {
+					return err
+				}
+			}
 			if tty {
 				return a.runPTY(ctx, client, id, req, terminal)
 			}
@@ -131,16 +150,48 @@ func (a *App) newExecCmd() *cobra.Command {
 			return processResult(result.ProcessExit)
 		},
 	}
-	flags := cmd.Flags()
-	flags.StringVar(&req.WorkingDir, "workdir", "", "Working directory inside the workspace")
-	flags.StringArrayVar(&env, "env", nil, "Environment variable (KEY=VALUE, repeatable)")
-	flags.IntVar(&req.TimeoutSeconds, "timeout", 0, "Process timeout in seconds (API default for noninteractive exec: 30)")
-	flags.StringVar(&req.User, "user", "", "Run as this workspace user")
-	flags.StringVar(&stdin, "stdin", "", "Input text, or - to read local stdin")
-	flags.BoolVar(&stream, "stream", false, "Stream output as it arrives (newline-delimited events with --json)")
-	flags.BoolVarP(&interactive, "interactive", "i", false, "Forward terminal input (use with -t)")
-	flags.BoolVarP(&tty, "tty", "t", false, "Allocate a remote PTY (use with -i)")
+	f := cmd.Flags()
+	f.StringVar(&flags.WorkingDir, "workdir", "", "Working directory inside the workspace")
+	f.StringArrayVar(&env, "env", nil, "Environment variable (KEY=VALUE, repeatable)")
+	f.IntVar(&flags.TimeoutSeconds, "timeout", 0, "Process timeout in seconds (API default for noninteractive exec: 30)")
+	f.StringVar(&flags.User, "user", "", "Run as this workspace user")
+	f.StringVar(&stdin, "stdin", "", "Input text, or - to read local stdin")
+	f.BoolVar(&stream, "stream", false, "Stream output as it arrives (newline-delimited events with --json)")
+	f.BoolVarP(&interactive, "interactive", "i", false, "Forward terminal input (use with -t)")
+	f.BoolVarP(&tty, "tty", "t", false, "Allocate a remote PTY (use with -i)")
 	return cmd
+}
+
+func missingExecCommand() error {
+	return usageErrorWithHint("Pass -- <command> after the workspace, for example `kibo exec wks_123 -- pwd`.", "expected a command after --")
+}
+
+func setExecStdin(req *kibotos.ExecRequest, stdin string, input io.Reader) error {
+	if stdin == "-" {
+		// Leave room for JSON encoding and the other request fields.
+		const maxStdin = 3 << 20
+		data, err := io.ReadAll(io.LimitReader(input, maxStdin+1))
+		if err != nil {
+			return err
+		}
+		if len(data) > maxStdin {
+			return usageError("--stdin - exceeds the 3 MiB input limit")
+		}
+		stdin = string(data)
+	}
+	req.Stdin = &stdin
+	return validateExecPayload(*req)
+}
+
+func validateExecPayload(req kibotos.ExecRequest) error {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	if len(payload) > 4<<20 {
+		return usageError("exec JSON request with --stdin exceeds the 4 MiB API limit")
+	}
+	return nil
 }
 
 func parseExecEnv(entries []string) (map[string]string, error) {

@@ -5,6 +5,8 @@
     "authentication",
     "workspaces",
     "volumes-and-exposures",
+    "exec-files-and-tunnels",
+    "packs-and-networking",
     "use-kibo-skill"
   ]
 }

@@ -17,6 +17,12 @@ Available on every `kibo` command:
 | `--api-key <key>` | — | Override Kibotos API key (`kb_...`) or session token (`kbs_...`) for this invocation |
 | `--api-url <url>` | `https://api.kibo.to/v1` | Override Kibotos v1 API base URL |
 
+Use `--no-input --json` with explicit IDs and required values for automation. Use
+`-q` for bare IDs. Essential missing inputs open guided prompts in a terminal.
+JSON output, quiet mode, `--no-input`, `TERM=dumb`, truthy `CI` or no-input
+environment variables, and non-terminal stdin or stderr disable prompts.
+Missing required inputs fail before authentication with exit 2 and a hint.
+
 ## Configuration & Precedence
 
 Config file location (first match wins):
@@ -158,33 +164,36 @@ All workspace commands accepting `[id-or-name]` accept either a `wks_...` ID or 
 - `kibo workspace network [id-or-name] --mode <public_internet|deny_all> [--no-wait] [--wait-timeout <dur>]`
   - Add repeatable `--allow <IP_OR_CIDR>` and `--deny <IP_OR_CIDR>`, up to one `--egress <egress_id=IP_OR_CIDR[,IP_OR_CIDR...]>`, and up to one `--resolver <resolver_id[=egress_id]>`. The resolver uses a direct path when the egress ID is omitted. Use `--drain-seconds <0..3600>` to control egress connection draining.
   - Updates replace the complete policy. Running workspaces wait by default until `network.applied` is true. Stopped workspaces apply the policy on the next start.
-- `kibo workspace volume attach <workspace> <vol_id> --mount /data [--delete-with-workspace]` adds one binding.
-- `kibo workspace volume detach <workspace> <vol_id>` removes one binding.
-- `kibo workspace volumes set <workspace> [vol_id:/path...]` replaces the complete list. Omit bindings to detach every volume. Volume changes require a stopped or failed workspace.
-- `kibo workspace resize <workspace> [--vcpus <n>] [--memory-mib <n>] [--disk-mib <n>]` changes at least one resource. The workspace must be stopped or failed, and the root disk can only grow.
-- `kibo workspace packs set <workspace> [pack_id...]` replaces the ordered list that takes effect on the next start. Omit IDs to clear the list.
-- `kibo workspace metrics <workspace> [--start <RFC3339>] [--end <RFC3339>]` reads host and guest time series.
+- `kibo workspace volume attach [workspace] [volume] --mount /data [--delete-with-workspace]` adds one binding. IDs and names are accepted. In a terminal, omit `--mount` to be prompted for it. The legacy `attach [workspace] --volume <id-or-name> [--mount-path <path>]` form can use the default mount for the first volume. The guided volume picker shows only same-zone, available, unbound volumes.
+- `kibo workspace volume detach [workspace] [volume]` removes one binding when a volume is given. With no volume in a terminal, a single binding is confirmed and multiple bindings open a picker, including **All volumes**. With no volume in automation, detach clears all bindings.
+- `kibo workspace volumes set [workspace] [vol_id:/path...]` replaces all volume bindings. Omitting bindings detaches every volume, with confirmation in a terminal. If the workspace is omitted, the picker shows stopped workspaces.
+- `kibo workspace resize [id-or-name] [--vcpus <n>] [--memory-mib <n>] [--disk-mib <n>]` changes at least one resource. Supply at least one flag in automation. Guided resize uses current values as defaults and sends changed fields. The workspace must be stopped or failed and the root disk can only grow.
+- `kibo workspace packs set [workspace] [pack_id...]` replaces the ordered list for the next start. In a terminal, omit the workspace to choose one and enter up to four Pack IDs separated by commas or spaces. Leave the field blank or pass only a workspace to clear the list. Clearing requires confirmation in a terminal unless `--yes` is set. Automation clears immediately.
+- `kibo workspace metrics [id-or-name] [--start <RFC3339>] [--end <RFC3339>]` reads host and guest time series. If both bounds are given, start must precede end. Only the workspace is prompted.
 - `kibo workspace wait [id-or-name] -s|--status <s1,s2> [--timeout <dur>]`
   - `--status` accepts comma-separated values or repeated flags (default `--timeout`: `30s`).
 
 ## Execution, file transfers, and tunnels
 
-- `kibo exec <workspace> [--workdir <path>] [--env KEY=VALUE] [--timeout <seconds>] [--user <user>] [--stdin <text|->] [--stream] -- <command> [args...]` runs argv directly. Repeat `--env` to pass multiple variables. The default timeout is 30 seconds. Use `--stream --timeout <seconds>` for long-running commands, for example `kibo exec wks_... --stream --timeout 900 --json -- python3 -u main.py`. Synchronous execution accepts up to 600 seconds. Combining `--stream` with `--json` emits one event per line.
-- `kibo exec <workspace> -it -- <command> [args...]` runs an interactive PTY with window-size forwarding on Unix. Use a local terminal with human-readable output.
-- `kibo files ls <workspace> [path] [--depth <n>]` lists entries under the path, defaulting to the selected user's home directory.
-- `kibo files stat <workspace> <path>` shows file attributes.
-- `kibo files get <workspace> <path> [local-file|-] [--range bytes=0-1023]` streams bytes to stdout or a local file. With `--json`, supply a local file to receive metadata.
-- `kibo files put <workspace> <local-file|-> <path> [--mode 0644] [--create-only]` uploads from a local file or stdin.
-- `kibo files mkdir <workspace> <path> [--mode 0755]`, `files mv <workspace> <source> <destination>`, and `files rm <workspace> <path>` manage workspace files. All file commands accept `--user <user>`.
-- `kibo tunnel <workspace> --remote <port> [--family ipv4|ipv6] [--listen 127.0.0.1:18080]` forwards local TCP connections to the guest's loopback port. Use `--unix-path <absolute-path>` in place of `--remote` to connect to a guest Unix socket.
+- `kibo exec [workspace] [flags] [-- command [args...]]` runs explicit argv after `--`. Automation supplies both the workspace and argv. In a terminal, omit the workspace to choose an available one. Omit argv to enter one command interpreted by `/bin/sh -c`.
+  - Flags are `--workdir <path>`, repeatable `--env KEY=VALUE`, `--timeout <seconds>`, `--user <user>`, `--stdin <text|->`, and `--stream`. Stdin size is limited to 3 MiB when read with `--stdin -`, and the resulting request must fit the 4 MiB API limit.
+  - The default synchronous timeout is 30 seconds and the synchronous maximum is 600 seconds. Use `--stream --timeout <seconds>` for long-running commands. `--stream --json` emits one event per line.
+  - `kibo exec [workspace] -it` opens a Bash or sh login shell on a Unix PTY. Add `-- <command> [args...]` for an explicit PTY command. PTY requires terminal stdin and is incompatible with `--stream`, `--stdin`, and JSON.
+- `kibo files ls [workspace] [path] [--depth <n>]` lists entries under the path. The default `.` resolves to the selected user's home directory.
+- `kibo files stat [workspace] [path]` shows attributes. `kibo files get [workspace] [path] [local-file|-] [--range bytes=0-1023]` writes bytes to stdout by default. With `--json`, supply a local file to receive metadata.
+- `kibo files put [workspace] [local-file|-] [path] [--mode 0644] [--create-only]` uploads from a local file or stdin. The guided destination defaults to `./<local-filename>` for local files.
+- `kibo files mkdir [workspace] [path] [--mode 0755]`, `kibo files mv [workspace] [source] [destination]`, and `kibo files rm [workspace] [path]` manage workspace files. Terminal deletion asks for confirmation.
+- All file commands accept `--user <user>`. They prompt only for the available workspace and missing required paths. Supply those explicitly in automation.
+- `kibo tunnel [workspace] [port]` forwards a local TCP listener to guest loopback. Supply a positional port, `--remote <port>`, or `--unix-path <absolute-path>` in automation. A terminal asks for the guest port if the target is omitted, with `8080` as the default. Optional flags are `--family ipv4|ipv6` for TCP and `--listen <host:port>` (default `127.0.0.1:18080`). JSON startup output includes `workspace_id` and `listen`.
 
 ## Packs, Egresses, and Resolvers
 
-- `kibo pack list [--zone <id>] [--limit <n>] [--page-token <token>]` and `kibo pack get <pack_id> [--revision <id>]` query the Pack catalog.
-- `kibo egress list` and `kibo resolver list` accept `--zone`, repeatable `--label KEY=VALUE`, `--limit`, and `--page-token`. Each also supports `get <id>` and `delete <id>`. Deletion fails while the resource is referenced by a workspace policy.
-- `kibo egress create --address <host:port>` creates a SOCKS5 proxy configuration. Options include `--name`, `--zone`, `--label`, `--username`, `--password-env <variable>`, `--tls`, `--server-name`, `--ca-cert <PEM-file>`, and `--udp-enabled`.
-- `kibo resolver create --protocol <udp|tcp|tls> --address <upstream>` configures an address-based DNS upstream. For DNS over HTTPS, use `--protocol https --url <endpoint>`. Creation accepts `--name`, `--zone`, and `--label`.
-- `kibo egress update <id>` and `kibo resolver update <id>` accept metadata flags `--name`, `--clear-name`, `--label`, and `--unset-label`. Run a separate update with the full endpoint configuration to replace it. An egress replacement accepts `--drain-seconds` and must resupply the credentials for an authenticated proxy.
+- `kibo pack list [--zone <id>] [--limit <n>] [--page-token <token>]` queries the catalog. `kibo pack get [pack_id] [--revision <id>]` picks a Pack in a terminal when the ID is omitted. Always supply a Pack ID in automation.
+- `kibo egress list` and `kibo resolver list` accept `--zone`, repeatable `--label KEY=VALUE`, `--limit`, and `--page-token`. Lists auto-paginate unless a limit or cursor is supplied.
+- Both resources support `get [id-or-name]`, `update [id-or-name]`, and `delete [id-or-name]`. Terminal commands pick a resource when omitted. Automation requires a canonical ID or a unique name. Names match exactly first, then case-insensitively. Ambiguity yields exit 2 and candidate IDs in automation. A terminal delete confirms the action. Deletion fails while a workspace policy references the resource.
+- `kibo egress create --address <host:port>` creates a SOCKS5 proxy configuration. Omit the address in a terminal to enter it and optionally give the egress a name. Other flags include `--name`, `--zone`, repeatable `--label`, `--username`, `--password` or `--password-env <variable>`, `--tls`, `--server-name`, `--ca-cert <PEM-file>`, and `--udp-enabled`.
+- `kibo resolver create --protocol <udp|tcp|tls> --address <upstream>` configures an address-based DNS upstream. For DNS-over-HTTPS, use `--protocol https --url <endpoint>`. In a terminal, `--url` implies HTTPS. When a terminal prompts for a missing protocol or upstream, it also offers an optional name if `--name` was omitted. Creation flags also include `--zone` and repeatable `--label`.
+- Egress and resolver updates accept `--name`, `--clear-name`, `--label`, and `--unset-label`. A flagless update in a terminal prompts for a new name. Use a separate update invocation with the full endpoint configuration to replace it. Replacing an authenticated egress requires resupplying credentials. Egress replacements also accept `--drain-seconds <0..3600>`.
 
 ## Volume Commands
 

@@ -1,13 +1,13 @@
 ---
 title: Workspaces
-description: Create, list, inspect, update, start, stop, configure timeouts and network policies, attach volumes, and wait for Kibotos workspaces with kibo workspace.
+description: Create, list, inspect, update, start, stop, resize, inspect metrics, and configure volume, Pack, and network bindings for Kibotos workspaces.
 ---
 
 Manage microVM workspaces using `kibo workspace` (aliases: `ws`, `workspaces`).
 
 ## Create a Workspace
 
-Run `kibo ws create` with no flags in an interactive terminal for a guided prompt, or pass flags directly. Async lifecycle commands (`create`, `start`, `stop`, `delete`, `network`) **wait until completion by default** (pass `--no-wait` to return immediately):
+Run `kibo ws create` with no flags in an interactive terminal to choose a template and optionally name the workspace. Supply flags for resource overrides and other settings. Async lifecycle commands (`create`, `start`, `stop`, `delete`, `network`) **wait until completion by default** (pass `--no-wait` to return immediately):
 
 ```bash
 kibo workspace create \
@@ -33,7 +33,8 @@ kibo workspace create \
 | `--memory <size>` | No | template default | Memory allocation (`4Gi`, `4096`; bare integer is MiB). |
 | `--disk <size>` | No | template default | Root disk size (`20Gi`, `20480`; bare integer is MiB). |
 | `--network <mode>` | No | `public_internet` | Outbound network mode: `public_internet` or `deny_all`. |
-| `--volume <vol>` | No | — | Existing persistent volume ID or name to attach at creation. |
+| `--volume <vol_id:/path>` | No | — | Repeat for multiple bindings. A single legacy volume ID or name can be paired with `--mount-path`. |
+| `--pack <pack_id>` | No | — | Bind a Pack. Repeat for up to four unique IDs. |
 | `--mount-path <path>` | No | — | Mount path inside the workspace (e.g. `/data`; requires `--volume`). |
 | `--delete-volume` | No | `false` | Delete the attached volume when this workspace is deleted (requires `--volume`). |
 | `--timeout <dur>` | No | — | Auto-timeout duration (`1h`, `30m`, `3600`; bare integer is seconds). |
@@ -110,21 +111,41 @@ kibo ws network agent-sandbox --mode deny_all
 kibo ws network agent-sandbox --mode public_internet
 ```
 
-## Attach and Detach Persistent Volumes
+Each policy update replaces the whole policy. For allow and deny lists, SOCKS5 routing, and custom DNS, see [Packs and networking](packs-and-networking).
 
-Volumes must be in the same zone as the workspace and attached or detached while the workspace is stopped:
+## Attach and detach persistent volumes
+
+Run `kibo ws volume attach` to choose a stopped workspace and an available, unbound volume in its zone. The legacy attach form can use the default mount for the first volume. The positional form asks for a mount path when `--mount` is omitted in a terminal. Provide a mount path when adding another binding.
+
+Run `kibo ws volume detach` to choose a workspace with attached volumes. With multiple bindings, choose one volume by its mount path or choose **All volumes**. Detaching the sole binding or all bindings asks for confirmation.
 
 ```bash
-# Stop the workspace, attach a volume, and start it again
-kibo ws stop wks_01j9... --wait
-kibo ws volume attach wks_01j9... \
-  --volume vol_01j9... \
-  --mount-path /data \
-  --delete-with-workspace=false
-kibo ws start wks_01j9... --wait
+kibo ws stop wks_123 --no-input --json
+kibo ws volume attach wks_123 vol_123 --mount /data --no-input --json
+kibo ws volume detach wks_123 vol_123 --no-input --json
+kibo ws volumes set wks_123 vol_123:/data vol_456:/cache --no-input --json
+```
 
-# Detach a volume (while workspace is stopped)
-kibo ws volume detach wks_01j9...
+The script form `kibo ws volume detach wks_123 --no-input --json` detaches all volumes. `ws volumes set` replaces the full list. With no arguments in a terminal, it picks a stopped workspace and confirms detaching all volumes. In automation, a workspace with zero bindings in the command sends an empty list immediately.
+
+## Resize and read metrics
+
+Run `kibo ws resize` to select a stopped or failed workspace and change its vCPUs, memory, or root disk. Enter keeps the current value and only changed values are sent. The root disk can only grow. Supplying any resource flag skips the resource questions.
+
+Run `kibo ws metrics` to pick a workspace and inspect the default metrics interval. Pass the optional interval bounds as RFC3339 timestamps.
+
+```bash
+kibo ws resize wks_123 --vcpus 4 --memory-mib 8192 --disk-mib 40960 --no-input --json
+kibo ws metrics wks_123 --start 2026-11-16T10:00:00Z --end 2026-11-16T11:00:00Z --no-input --json
+```
+
+## Replace the Pack list
+
+Run `kibo ws packs set` without arguments to choose a workspace, see the available Pack IDs, and enter up to four unique IDs separated by commas or spaces. Leave the field blank or pass only a workspace to clear the list. In a terminal, `kibo` asks for confirmation before clearing unless you pass `--yes`. Changes take effect on the next start.
+
+```bash
+kibo ws packs set wks_123 node-22 kibotos-desktop-env --no-input --json
+kibo ws packs set wks_123 --no-input --json # Clear the list
 ```
 
 ## Explicit Wait (`kibo workspace wait`)

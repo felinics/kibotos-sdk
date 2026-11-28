@@ -135,25 +135,30 @@ func (a *App) newVolumeListCmd() *cobra.Command {
 	return cmd
 }
 
+func (a *App) resolveCommandVolume(ctx context.Context, ref string, filter func(kibotos.Volume) bool, emptyMessage, title string) (*kibotos.Client, string, *kibotos.Volume, error) {
+	if strings.TrimSpace(ref) == "" && !a.isInteractive() {
+		return nil, "", nil, missingVolumeRef()
+	}
+	client, _, err := a.requireClient()
+	if err != nil {
+		return nil, "", nil, err
+	}
+	id, vol, err := a.resolveVolume(ctx, client, ref, filter, emptyMessage, title)
+	return client, id, vol, err
+}
+
 func (a *App) newVolumeGetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "get [id-or-name]",
 		Short: "Get details of a persistent volume",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, _, err := a.requireClient()
+			ctx := cmd.Context()
+			client, volID, _, err := a.resolveCommandVolume(ctx, firstArg(args), nil, "", "Select a volume to inspect:")
 			if err != nil {
 				return err
 			}
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			volID, _, err := a.resolveVolume(cmd.Context(), client, ref, nil, "no volumes found", "Select a volume to inspect:")
-			if err != nil {
-				return err
-			}
-			vol, err := client.Volumes.Get(cmd.Context(), volID)
+			vol, err := client.Volumes.Get(ctx, volID)
 			if err != nil {
 				return err
 			}
@@ -301,17 +306,19 @@ func (a *App) newVolumeUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !nameChanged && !clearName && len(parsedLabels) == 0 && !a.isInteractive() {
-				return usageError("specify at least one of --name, --clear-name, --label, or --unset-label")
+			ref := firstArg(args)
+			if !a.isInteractive() {
+				if strings.TrimSpace(ref) == "" {
+					return missingVolumeRef()
+				}
+				if !nameChanged && !clearName && len(parsedLabels) == 0 {
+					return usageError("specify at least one of --name, --clear-name, --label, or --unset-label")
+				}
 			}
 
 			client, _, err := a.requireClient()
 			if err != nil {
 				return err
-			}
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
 			}
 			volID, existing, err := a.resolveVolume(cmd.Context(), client, ref, nil, "no volumes found", "Select a volume to update:")
 			if err != nil {
@@ -393,17 +400,9 @@ func (a *App) newVolumeResizeCmd() *cobra.Command {
 				return err
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			volID, picked, err := a.resolveVolume(
-				ctx, client, ref,
+			client, volID, picked, err := a.resolveCommandVolume(
+				ctx, firstArg(args),
 				func(v kibotos.Volume) bool { return v.Status == kibotos.VolumeStatusAvailable },
 				"no available volumes found to resize",
 				"Select an available volume to resize:",
@@ -481,16 +480,8 @@ func (a *App) newVolumeDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			volID, picked, err := a.resolveVolume(ctx, client, ref, nil, "no volumes found", "Select a volume to delete:")
+			client, volID, picked, err := a.resolveCommandVolume(ctx, firstArg(args), nil, "", "Select a volume to delete:")
 			if err != nil {
 				return err
 			}
@@ -556,16 +547,8 @@ func (a *App) newVolumeWaitCmd() *cobra.Command {
 				return missingFlagError("--status", "Pass --status <s1,s2> (e.g. --status available,failed).")
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			volID, _, err := a.resolveVolume(ctx, client, ref, nil, "no volumes found", "Select a volume to wait on:")
+			client, volID, _, err := a.resolveCommandVolume(ctx, firstArg(args), nil, "", "Select a volume to wait on:")
 			if err != nil {
 				return err
 			}

@@ -27,7 +27,9 @@ kibo whoami --json
 
 Follow these rules on every `kibo` invocation:
 
-1. **Use `--json` for structured results.**
+1. **Pass explicit inputs and use `--no-input --json`.**
+   - Pass resource IDs, required paths, and required flags without relying on pickers. Human users can omit essential inputs in a terminal for a guided flow.
+   - Missing inputs return exit 2 before authentication. For egresses and resolvers, use canonical IDs or unique names and resolve an `ambiguous_name` error with one of the candidate IDs.
    - In `--json` mode, `stdout` carries JSON and interactive prompts are disabled. `exec --stream --json` emits one JSON event per line. Plain `files get` streams file bytes to stdout. Use a local destination to get metadata in JSON mode.
    - Progress updates, interactive login URLs/codes, multi-zone warnings, and structured error envelopes (`{"error": {...}}`) are always written to `stderr`.
    - For simple shell capture where you only need the resource ID, `-q` (`--quiet`) prints bare IDs to `stdout`.
@@ -44,7 +46,7 @@ Follow these rules on every `kibo` invocation:
 4. **Protect secrets**:
    - Never print raw `kb_...` API keys or read `~/.config/kibo/config.json` into logs or chat responses. `kibo whoami` and `kibo profile list` always mask keys (`kb_...xxxx`).
 5. **Confirm destructive operations**:
-   - Confirm with the user before deleting workspaces (`kibo workspace delete`), deleting volumes (`kibo volume delete`), force-stopping (`kibo workspace stop --force`), or revoking live exposures (`kibo exposure revoke`), unless the user explicitly asked for cleanup.
+   - Commands in automation mode skip terminal confirmations. Confirm intent before deleting resources or files, force-stopping, revoking exposures, or clearing all bindings, unless the user already requested the action.
 
 ## 3. High-Frequency Kibotos Recipes
 
@@ -95,14 +97,28 @@ kibo workspace start wks_... --json
 ### Execute commands, transfer files, and forward ports
 
 ```bash
-kibo exec wks_... --json --workdir /app --timeout 60 -- python3 main.py
-kibo exec wks_... --stream --timeout 900 --json -- python3 -u main.py
-kibo files put wks_... ./main.py /app/main.py --create-only --json
-kibo files get wks_... /app/output.log ./output.log --json
-kibo tunnel wks_... --remote 8080 --listen 127.0.0.1:18080 --json
+kibo exec wks_... --no-input --json --workdir /app --timeout 60 -- python3 main.py
+kibo exec wks_... --stream --timeout 900 --no-input --json -- python3 -u main.py
+kibo files put wks_... ./main.py /app/main.py --create-only --no-input --json
+kibo files get wks_... /app/output.log ./output.log --no-input --json
+kibo tunnel wks_... 8080 --listen 127.0.0.1:18080 --no-input --json
 ```
 
-Pass `--stream --timeout <seconds>` for commands that may run past the default 30 seconds. Interactive `exec -it` requires a Unix terminal. Use the noninteractive forms for scripts and agents. A tunnel stays open until canceled.
+Pass `--stream --timeout <seconds>` for commands that may run past the default 30 seconds. A user can run `kibo exec -it` from a Unix terminal to choose an available workspace and open a login shell. A tunnel emits its listener address at startup and stays open until canceled.
+
+### Configure Packs, resources, and networking
+
+```bash
+kibo pack get node-22 --no-input --json
+kibo ws packs set wks_... node-22 kibotos-desktop-env --no-input --json
+kibo ws resize wks_... --memory-mib 4096 --no-input --json
+kibo ws metrics wks_... --no-input --json
+kibo ws volumes set wks_... vol_...:/data --no-input --json
+kibo egress create --address proxy.example.com:1080 --name proxy --no-input --json
+kibo resolver create --protocol https --url https://dns.example/dns-query --no-input --json
+```
+
+The Pack list applies on the next start. Volume and Pack set commands replace the existing list. A workspace argument by itself clears the list in automation. Resize applies to stopped or failed workspaces, and the disk can only grow.
 
 ### Extend Timeout, Toggle Network, Stop, or Clean Up
 
@@ -122,5 +138,5 @@ kibo workspace delete wks_... --json
 
 Load these references only when you need full flag tables, multi-step patterns, or error recovery details:
 
-- [CLI Reference](references/cli-reference.md): Complete `kibo` command tree, short aliases (`ws`, `vol`, `exp`, `tpl`), every flag, environment variables & precedence, exit codes, and API error codes.
+- [CLI Reference](references/cli-reference.md): Command syntax, interactive defaults, flags, environment variables, and error codes.
 - [Workflows & Troubleshooting](references/workflows.md): End-to-end Kibotos agent recipes (ephemeral sandboxes, persistent volumes, air-gapped workspaces, multi-profile CI) and error recovery playbooks.

@@ -22,19 +22,25 @@ func (a *App) newPackCmd() *cobra.Command {
 	)
 	var revision string
 	get := &cobra.Command{
-		Use:   "get <pack_id>",
+		Use:   "get [pack_id]",
 		Short: "Show a Pack or a specific revision",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateNonEmptyFlag(cmd, "revision", revision); err != nil {
-				return err
+			ref := firstArg(args)
+			if ref == "" && !a.isInteractive() {
+				return missingPackRef()
 			}
 			client, _, err := a.requireClient()
 			if err != nil {
 				return err
 			}
+			ctx := cmd.Context()
+			id, _, err := a.resolvePack(ctx, client, ref, "", "Select a Pack:")
+			if err != nil {
+				return err
+			}
 			if revision != "" {
-				r, err := client.Packs.GetRevision(cmd.Context(), args[0], revision)
+				r, err := client.Packs.GetRevision(ctx, id, revision)
 				if err != nil {
 					return err
 				}
@@ -45,7 +51,7 @@ func (a *App) newPackCmd() *cobra.Command {
 					{Key: "Zones", Value: strings.Join(r.Zones, ", ")}, {Key: "Published", Value: output.FormatTime(r.PublishedAt)},
 				})
 			}
-			p, err := client.Packs.Get(cmd.Context(), args[0])
+			p, err := client.Packs.Get(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -90,26 +96,18 @@ func newCatalogListCmd[T any](a *App, noun string, filterLabels bool, headers []
 				return err
 			}
 			ctx := cmd.Context()
-			page, err := list(ctx, client, options)
+			var page *kibotos.MultiZonePage[T]
+			if cmd.Flags().Changed("limit") || cmd.Flags().Changed("page-token") {
+				page, err = list(ctx, client, options)
+			} else {
+				page, err = collectCatalogPages(noun, options.PageToken, func(token string) (*kibotos.MultiZonePage[T], error) {
+					params := options
+					params.PageToken = token
+					return list(ctx, client, params)
+				})
+			}
 			if err != nil {
 				return err
-			}
-			if !cmd.Flags().Changed("limit") && !cmd.Flags().Changed("page-token") {
-				seen := map[string]bool{}
-				for page.HasMore() {
-					options.PageToken = page.Token()
-					if seen[options.PageToken] {
-						return fmt.Errorf("repeated page token while listing %s", noun)
-					}
-					seen[options.PageToken] = true
-					next, err := list(ctx, client, options)
-					if err != nil {
-						return err
-					}
-					page.Data = append(page.Data, next.Data...)
-					page.UnavailableZones = append(page.UnavailableZones, next.UnavailableZones...)
-					page.NextPageToken = next.NextPageToken
-				}
 			}
 			p := a.printer()
 			if p.IsJSON() {
@@ -131,6 +129,10 @@ func newCatalogListCmd[T any](a *App, noun string, filterLabels bool, headers []
 			}
 			if p.IsQuiet() {
 				return nil
+			}
+			if len(rows) == 0 {
+				_, err := fmt.Fprintf(p.Out, "No %s found.\n", noun)
+				return err
 			}
 			return p.Table(headers, rows)
 		},

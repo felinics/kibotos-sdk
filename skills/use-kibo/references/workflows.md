@@ -1,6 +1,6 @@
 # Kibotos Agent Workflows & Troubleshooting
 
-Concrete end-to-end recipes for driving Kibotos via `kibo`.
+Concrete recipes for driving Kibotos via `kibo`. Use explicit inputs for automation. Human operators can omit essential values in a terminal to use the guided flows.
 
 ## Workflow 1: Ephemeral Sandbox with HTTPS Preview
 
@@ -93,10 +93,54 @@ kibo profile use staging --json
 kibo workspace list --profile prod --json
 ```
 
+## Workflow 5. Run a job and copy its output
+
+Use an available workspace. The script sends every path and the exact remote argv.
+
+```bash
+kibo files put "$WS_ID" ./main.py /app/main.py --create-only --no-input --json
+kibo exec "$WS_ID" --workdir /app --stream --timeout 900 --no-input --json -- python3 -u main.py
+kibo files get "$WS_ID" /app/output.log ./output.log --no-input --json
+kibo ws metrics "$WS_ID" --no-input --json
+```
+
+Check the remote process status before downloading its artifacts. Use a local file for JSON download metadata. For a service that needs a local connection, start the tunnel in a separate process, read its JSON startup line, and cancel it when finished.
+
+```bash
+kibo tunnel "$WS_ID" --remote 8080 --listen 127.0.0.1:18080 --no-input --json
+```
+
+## Workflow 6. Prepare the next workspace start
+
+Check the workspace zone and volumes before replacing bindings. Supply the complete desired list each time.
+
+```bash
+kibo ws stop "$WS_ID" --no-input --json
+kibo ws resize "$WS_ID" --memory-mib 4096 --no-input --json
+kibo ws volumes set "$WS_ID" "$VOL_ID:/data" --no-input --json
+kibo pack list --zone global-1 --no-input --json
+kibo ws packs set "$WS_ID" node-22 --no-input --json
+kibo ws start "$WS_ID" --no-input --json
+```
+
+## Workflow 7. Bind a SOCKS5 egress and custom DNS
+
+Create the resources, capture their canonical IDs, and apply the complete outbound policy to the workspace. The resolver in this example routes through the egress.
+
+```bash
+EGRESS_ID=$(kibo egress create --address proxy.example.com:1080 --name proxy \
+  --password-env PROXY_PASSWORD --udp-enabled --no-input -q)
+RESOLVER_ID=$(kibo resolver create --protocol udp --address 10.0.0.53:53 --no-input -q)
+kibo ws network "$WS_ID" --mode public_internet \
+  --egress "$EGRESS_ID=10.0.0.0/8" --resolver "$RESOLVER_ID=$EGRESS_ID" --no-input --json
+```
+
 ## Troubleshooting & Recovery
 
 | Symptom / Error | Cause | Fix |
 | --- | --- | --- |
+| Exit `2` with `ambiguous_name` | The same display name matches multiple resources | Use a canonical ID from `error.details.candidates` |
+| Exit `2` with a usage hint | A required argument or flag is missing | Supply the indicated value and rerun |
 | Exit `3` (`unauthenticated`) | Missing or revoked API key | Ask user to run `kibo login` or set `KIBOTOS_API_KEY` |
 | `zone_mismatch` (`400`) | Volume is in a different zone than the workspace | Inspect `kibo volume get <vol_id> --json` and pass matching `--zone` |
 | `template_unavailable_in_zone` (`400`) | Template is not replicated to the requested zone | Check `kibo template get <id> --json` `.zones` and pick a supported zone |

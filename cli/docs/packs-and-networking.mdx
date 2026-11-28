@@ -1,0 +1,61 @@
+---
+title: Packs and Networking
+description: Browse Kibotos Packs and configure SOCKS5 egresses, DNS resolvers, and workspace outbound policies.
+---
+
+## Packs
+
+Run `kibo pack list` to browse Packs. Run `kibo pack get` to pick a Pack by ID, with its version and available zones shown. Pass `--revision` to inspect a specific revision.
+
+```bash
+kibo pack list --zone global-1 --no-input --json
+kibo pack get node-22 --no-input --json
+kibo pack get node-22 --revision r42 --no-input --json
+kibo ws packs set wks_123 node-22 kibotos-desktop-env --no-input --json
+```
+
+A workspace can bind up to four unique Pack IDs. `ws packs set` replaces the ordered list for the next start. [Workspace configuration](workspaces)
+
+## SOCKS5 egresses
+
+Run `kibo egress create` to enter a SOCKS5 address and optionally name it. Use `egress get`, `egress update`, or `egress delete` without a reference to choose an egress. An update without flags prompts for a new name. Deletion asks for confirmation in a terminal.
+
+```bash
+kibo egress create --address proxy.example.com:1080 --name proxy --username app \
+  --password-env PROXY_PASSWORD --tls --udp-enabled --no-input --json
+kibo egress list --zone global-1 --no-input --json
+kibo egress get egr_123 --no-input --json
+kibo egress update egr_123 --name proxy-east --no-input --json
+kibo egress update egr_123 --address proxy-east.example.com:1080 --username app \
+  --password-env PROXY_PASSWORD --tls --udp-enabled --drain-seconds 60 --no-input --json
+kibo egress delete egr_123 --no-input --json
+```
+
+Endpoint flags replace the complete SOCKS5 configuration. Supply credentials and TLS settings again when applicable. Use `--address` for the host and port, `--server-name` for a TLS server-name override, and `--ca-cert` for a PEM trust file. `--zone` and repeatable `--label` are optional creation flags.
+
+## DNS resolvers
+
+Run `kibo resolver create` to choose a DNS protocol, enter its upstream, and optionally name the resolver. Use `resolver get`, `resolver update`, or `resolver delete` without a reference to choose a resolver. A flagless update prompts for the new name. Deletion asks for confirmation in a terminal.
+
+```bash
+kibo resolver create --protocol udp --address 10.0.0.53:53 --name internal --no-input --json
+kibo resolver create --protocol https --url https://dns.example/dns-query --name doh --no-input --json
+kibo resolver list --no-input --json
+kibo resolver get rsv_123 --no-input --json
+kibo resolver update rsv_123 --name internal-east --no-input --json
+kibo resolver update rsv_123 --protocol tls --address dns.example:853 --no-input --json
+kibo resolver delete rsv_123 --no-input --json
+```
+
+For UDP, TCP, or TLS, provide a host or `host:port` via `--address`. HTTPS takes an endpoint via `--url`. Use separate update invocations for metadata (`--name`, `--clear-name`, `--label`, `--unset-label`) and full endpoint replacement.
+
+## Referencing networking resources
+
+Egress and resolver commands accept a unique name or canonical ID. Names match exact case first, then case-insensitively. If a name is ambiguous, use a picker in a terminal or supply an ID in automation. List commands collect all pages by default. Use `--limit` or `--page-token` to fetch one page.
+
+Bind resources by ID when updating the outbound policy. A resolver ID alone uses a direct path. Append `=egress_id` to route its DNS traffic through that egress. Delete resources after removing their references from workspace policies.
+
+```bash
+kibo ws network wks_123 --mode public_internet \
+  --egress egr_123=10.0.0.0/8 --resolver rsv_123=egr_123 --no-input --json
+```

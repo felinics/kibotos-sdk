@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -83,8 +84,8 @@ func NewRootCommand(opts Options) *cobra.Command {
 
 	root := &cobra.Command{
 		Use:           "kibo",
-		Short:         "Official CLI for Kibotos workspaces, volumes, and exposures",
-		Long:          "kibo is the official command-line interface for Kibotos.\nCreate and manage cloud microVM workspaces, persistent volumes, and temporary HTTPS port exposures.",
+		Short:         "Run commands and manage Kibotos workspaces, files, tunnels, volumes, Packs, and networking",
+		Long:          "kibo is the official command-line interface for Kibotos.\nManage workspaces, run commands, transfer files, and open tunnels. Configure volumes, Packs, exposures, and networking.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -124,7 +125,7 @@ func NewRootCommand(opts Options) *cobra.Command {
 		app.newExposureCmd(),
 		app.newExecCmd(),
 		app.newFilesCmd(),
-		app.newTunnelCmd(),
+		app.newTunnelCmd((&net.ListenConfig{}).Listen),
 		app.newPackCmd(),
 		app.newEgressCmd(),
 		app.newResolverCmd(),
@@ -327,6 +328,13 @@ func (a *App) prompter() *prompt.Prompter {
 		a.prompterInst = prompt.New(a.stdin, a.stderr, a.colorEnabledFor(a.stderr))
 	}
 	return a.prompterInst
+}
+
+func (a *App) remainingStdin() io.Reader {
+	if a.prompterInst != nil {
+		return a.prompterInst.RemainingInput()
+	}
+	return a.stdin
 }
 
 func (a *App) printer() *output.Printer {

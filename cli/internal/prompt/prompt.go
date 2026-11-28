@@ -49,6 +49,11 @@ func New(in io.Reader, out io.Writer, enableColor bool) *Prompter {
 	return p
 }
 
+// RemainingInput returns stdin including bytes buffered by line-based prompts.
+func (p *Prompter) RemainingInput() io.Reader {
+	return p.reader
+}
+
 func (p *Prompter) style(attrs ...color.Attribute) *color.Color {
 	c := color.New(attrs...)
 	if p.color {

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -162,19 +163,12 @@ func (a *App) newWorkspaceGetCmd() *cobra.Command {
 		Short: "Get details of a workspace",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, _, err := a.requireClient()
+			ctx := cmd.Context()
+			client, wsID, _, err := a.resolveCommandWorkspace(ctx, firstArg(args), nil, "", "Select a workspace to inspect:")
 			if err != nil {
 				return err
 			}
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, _, err := a.resolveWorkspace(cmd.Context(), client, ref, nil, "no workspaces found", "Select a workspace to inspect:")
-			if err != nil {
-				return err
-			}
-			ws, err := client.Workspaces.Get(cmd.Context(), wsID)
+			ws, err := client.Workspaces.Get(ctx, wsID)
 			if err != nil {
 				return err
 			}
@@ -459,17 +453,19 @@ func (a *App) newWorkspaceUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !nameChanged && !clearName && len(parsedLabels) == 0 && !a.isInteractive() {
-				return usageError("specify at least one of --name, --clear-name, --label, or --unset-label")
+			ref := firstArg(args)
+			if !a.isInteractive() {
+				if strings.TrimSpace(ref) == "" {
+					return missingWorkspaceRef()
+				}
+				if !nameChanged && !clearName && len(parsedLabels) == 0 {
+					return usageError("specify at least one of --name, --clear-name, --label, or --unset-label")
+				}
 			}
 
 			client, _, err := a.requireClient()
 			if err != nil {
 				return err
-			}
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
 			}
 			wsID, existing, err := a.resolveWorkspace(cmd.Context(), client, ref, nil, "no workspaces found", "Select a workspace to update:")
 			if err != nil {
@@ -536,16 +532,8 @@ func (a *App) newWorkspaceDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, picked, err := a.resolveWorkspace(ctx, client, ref, nil, "no workspaces found", "Select a workspace to delete:")
+			client, wsID, picked, err := a.resolveCommandWorkspace(ctx, firstArg(args), nil, "", "Select a workspace to delete:")
 			if err != nil {
 				return err
 			}
@@ -624,17 +612,9 @@ func (a *App) newWorkspaceStartCmd() *cobra.Command {
 				return err
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, _, err := a.resolveWorkspace(
-				ctx, client, ref,
+			client, wsID, _, err := a.resolveCommandWorkspace(
+				ctx, firstArg(args),
 				func(w kibotos.Workspace) bool { return w.Status == kibotos.WorkspaceStatusStopped },
 				"no stopped workspaces found to start",
 				"Select a stopped workspace to start:",
@@ -690,17 +670,9 @@ func (a *App) newWorkspaceStopCmd() *cobra.Command {
 				return err
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, picked, err := a.resolveWorkspace(
-				ctx, client, ref,
+			client, wsID, picked, err := a.resolveCommandWorkspace(
+				ctx, firstArg(args),
 				func(w kibotos.Workspace) bool { return w.Status == kibotos.WorkspaceStatusAvailable },
 				"no available workspaces found to stop",
 				"Select a workspace to stop:",
@@ -785,17 +757,9 @@ func (a *App) newWorkspaceTimeoutCmd() *cobra.Command {
 				return err
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, _, err := a.resolveWorkspace(
-				ctx, client, ref,
+			client, wsID, _, err := a.resolveCommandWorkspace(
+				ctx, firstArg(args),
 				func(w kibotos.Workspace) bool { return w.Status == kibotos.WorkspaceStatusAvailable },
 				"no available workspaces found",
 				"Select a workspace to update timeout:",
@@ -864,6 +828,15 @@ func (a *App) newWorkspaceNetworkCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			validateMode := func(mode kibotos.NetworkMode) error {
+				if mode == kibotos.NetworkModeDenyAll && len(allow)+len(deny)+len(egresses)+len(resolvers) != 0 {
+					return usageError("deny_all requires empty allow, deny, egress and resolver lists")
+				}
+				return nil
+			}
+			if err := validateMode(parsedMode); err != nil {
+				return err
+			}
 			params.DrainSeconds, err = optionalIntFlag(cmd, "drain-seconds", drain, 0, 3600)
 			if err != nil {
 				return err
@@ -873,16 +846,8 @@ func (a *App) newWorkspaceNetworkCmd() *cobra.Command {
 				return err
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, _, err := a.resolveWorkspace(ctx, client, ref, nil, "no workspaces found", "Select a workspace to update network policy:")
+			client, wsID, _, err := a.resolveCommandWorkspace(ctx, firstArg(args), nil, "", "Select a workspace to update network policy:")
 			if err != nil {
 				return err
 			}
@@ -896,12 +861,12 @@ func (a *App) newWorkspaceNetworkCmd() *cobra.Command {
 					return err
 				}
 				parsedMode = kibotos.NetworkMode(choice.Value)
+				if err := validateMode(parsedMode); err != nil {
+					return err
+				}
 			}
 
 			params.Mode = parsedMode
-			if parsedMode == kibotos.NetworkModeDenyAll && len(allow)+len(deny)+len(egresses)+len(resolvers) != 0 {
-				return usageError("deny_all requires empty allow, deny, egress and resolver lists")
-			}
 			ws, err := client.Workspaces.SetNetwork(ctx, wsID, params)
 			if err != nil {
 				return err
@@ -950,96 +915,74 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 		Short: "Attach a persistent volume to a workspace",
 		Args:  cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 {
+			positional := len(args) == 2
+			volume, mount := volumeRef, mountPath
+			if positional {
 				if cmd.Flags().Changed("volume") || cmd.Flags().Changed("mount-path") {
 					return usageError("use the volume argument and --mount together")
 				}
-				if !cmd.Flags().Changed("mount") {
+				volume, mount = args[1], newMount
+				if strings.TrimSpace(volume) == "" {
+					return missingVolumeRef()
+				}
+				if !cmd.Flags().Changed("mount") && !a.isInteractive() {
 					return missingFlagError("--mount", "Pass the absolute mount path, for example --mount /data.")
 				}
-				mount, err := validateMountPath(newMount)
-				if err != nil {
+			} else {
+				if cmd.Flags().Changed("mount") {
+					return usageError("--mount requires a positional volume ID or name")
+				}
+				if err := validateNonEmptyFlag(cmd, "volume", volume); err != nil {
 					return err
 				}
-				return a.changeWorkspaceVolume(cmd.Context(), args[0], args[1], mount, deleteWithWorkspace)
+				if strings.TrimSpace(volume) == "" && !a.isInteractive() {
+					return missingFlagError("--volume", "Pass --volume <vol_id>. Run `kibo volume list --attached false --json` to see available volumes.")
+				}
 			}
-			if cmd.Flags().Changed("mount") {
-				return usageError("--mount requires a positional volume ID")
-			}
-			if err := validateNonEmptyFlag(cmd, "volume", volumeRef); err != nil {
-				return err
-			}
-			if cmd.Flags().Changed("mount-path") {
+			if cmd.Flags().Changed("mount") || cmd.Flags().Changed("mount-path") {
 				var err error
-				mountPath, err = validateMountPath(mountPath)
+				mount, err = validateMountPath(mount)
 				if err != nil {
 					return err
 				}
 			}
-			if strings.TrimSpace(volumeRef) == "" && !a.isInteractive() {
-				return missingFlagError("--volume", "Pass --volume <vol_id>. Run `kibo volume list --attached false --json` to see available volumes.")
-			}
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
+
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, wsObj, err := a.resolveWorkspace(
-				ctx, client, ref,
-				func(w kibotos.Workspace) bool { return w.Status == kibotos.WorkspaceStatusStopped },
-				"no stopped workspaces found (stop a workspace before attaching a volume)",
-				"Select a stopped workspace:",
-			)
+			client, id, ws, err := a.resolveCommandWorkspace(ctx, firstArg(args), stoppedWorkspace,
+				"no stopped workspaces found (stop a workspace before attaching a volume)", "Select a stopped workspace:")
 			if err != nil {
 				return err
 			}
-
-			// If we need to pick a volume interactively, know the workspace zone to filter matching volumes.
-			wsZone := ""
-			if wsObj != nil {
-				wsZone = wsObj.Zone
-			} else if strings.TrimSpace(volumeRef) == "" && a.isInteractive() {
-				if fetched, gErr := client.Workspaces.Get(ctx, wsID); gErr == nil {
-					wsZone = fetched.Zone
+			if ws == nil {
+				ws, err = client.Workspaces.Get(ctx, id)
+				if err != nil {
+					return err
 				}
 			}
-
-			volID, _, err := a.resolveVolume(
-				ctx, client, volumeRef,
-				func(v kibotos.Volume) bool {
-					if v.Status != kibotos.VolumeStatusAvailable || (v.WorkspaceID != nil && *v.WorkspaceID != "") {
-						return false
-					}
-					if wsZone != "" && v.Zone != wsZone {
-						return false
-					}
-					return true
-				},
-				fmt.Sprintf("no unattached available volumes found in zone %s", output.EmptyDash(wsZone)),
-				"Select a volume to attach:",
-			)
+			needsMount := positional || len(workspaceVolumes(ws)) > 0
+			if needsMount && mount == "" && !a.isInteractive() {
+				return missingFlagError("--mount-path", "Pass an absolute mount path when the workspace already has an attached volume.")
+			}
+			volID, _, err := a.resolveVolume(ctx, client, volume, func(v kibotos.Volume) bool {
+				return v.Status == kibotos.VolumeStatusAvailable && v.Zone == ws.Zone &&
+					(v.WorkspaceID == nil || *v.WorkspaceID == "")
+			}, fmt.Sprintf("no unattached available volumes found in zone %s", output.EmptyDash(ws.Zone)), "Select a volume to attach:")
 			if err != nil {
 				return err
 			}
 
-			ws, err := client.Workspaces.Get(ctx, wsID)
-			if err != nil {
-				return err
-			}
-			if len(workspaceVolumes(ws)) > 0 {
-				if mountPath == "" {
-					return missingFlagError("--mount-path", "Pass an absolute mount path when the workspace already has an attached volume.")
+			if needsMount {
+				if mount == "" {
+					mount, err = a.prompter().Input("Mount path (e.g. /data)", "/data", validateMountPathInput)
+					if err != nil {
+						return err
+					}
+					mount, _ = validateMountPath(mount)
 				}
-				return a.updateWorkspaceVolumeBindings(ctx, client, ws, volID, mountPath, deleteWithWorkspace)
+				return a.updateWorkspaceVolumeBindings(ctx, client, ws, volID, mount, deleteWithWorkspace)
 			}
-			ws, err = client.Workspaces.AttachVolume(ctx, wsID, kibotos.AttachVolumeParams{
-				ID:                  volID,
-				MountPath:           strings.TrimSpace(mountPath),
-				DeleteWithWorkspace: deleteWithWorkspace,
+			ws, err = client.Workspaces.AttachVolume(ctx, id, kibotos.AttachVolumeParams{
+				ID: volID, MountPath: mount, DeleteWithWorkspace: deleteWithWorkspace,
 			})
 			if err != nil {
 				return err
@@ -1055,31 +998,77 @@ func (a *App) newWorkspaceVolumeCmd() *cobra.Command {
 
 	detachCmd := &cobra.Command{
 		Use:   "detach [workspace] [volume]",
-		Short: "Detach a volume by ID (omitting it detaches all volumes)",
+		Short: "Detach a volume or detach all volumes",
 		Args:  cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 {
-				return a.changeWorkspaceVolume(cmd.Context(), args[0], args[1], "", false)
-			}
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
+			if len(args) == 2 && strings.TrimSpace(args[1]) == "" {
+				return missingVolumeRef()
 			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, _, err := a.resolveWorkspace(
-				ctx, client, ref,
-				func(w kibotos.Workspace) bool { return w.Volume != nil },
-				"no workspaces with an attached volume found",
-				"Select a workspace to detach its volume:",
-			)
+			client, id, ws, err := a.resolveCommandWorkspace(ctx, firstArg(args), func(w kibotos.Workspace) bool {
+				return (stoppedWorkspace(w) || w.Status == kibotos.WorkspaceStatusFailed) && len(workspaceVolumes(&w)) > 0
+			}, "no stopped or failed workspaces with attached volumes found", "Select a workspace to detach volumes from:")
 			if err != nil {
 				return err
 			}
-			ws, err := client.Workspaces.DetachVolume(ctx, wsID)
+			if len(args) == 2 {
+				if ws == nil {
+					ws, err = client.Workspaces.Get(ctx, id)
+					if err != nil {
+						return err
+					}
+				}
+				volID, _, err := a.resolveVolume(ctx, client, args[1], func(v kibotos.Volume) bool {
+					return slices.ContainsFunc(workspaceVolumes(ws), func(binding kibotos.WorkspaceVolume) bool {
+						return binding.ID == v.ID
+					})
+				}, "no matching volumes are attached to this workspace", "Select a volume to detach:")
+				if err != nil {
+					return err
+				}
+				return a.updateWorkspaceVolumeBindings(ctx, client, ws, volID, "", false)
+			}
+			if a.isInteractive() {
+				if ws == nil {
+					ws, err = client.Workspaces.Get(ctx, id)
+					if err != nil {
+						return err
+					}
+				}
+				vols := workspaceVolumes(ws)
+				if len(vols) == 0 {
+					return &CLIError{ExitCode: ExitError, Code: "no_matching_volume", Message: "workspace has no attached volumes"}
+				}
+				var selected string
+				if len(vols) > 1 {
+					options := make([]prompt.Option, 0, len(vols)+1)
+					for _, vol := range vols {
+						options = append(options, prompt.Option{Value: vol.ID, Label: fmt.Sprintf("%s at %s", vol.ID, vol.MountPath)})
+					}
+					options = append(options, prompt.Option{Label: "All volumes"})
+					choice, err := a.prompter().Select("Select a volume to detach:", "Volume", options, 0)
+					if err != nil {
+						return err
+					}
+					selected = choice.Value
+				}
+				label := resourceLabel(id, ws.Name)
+				message := fmt.Sprintf("Detach all volumes from %s?", label)
+				if len(vols) == 1 {
+					message = fmt.Sprintf("Detach volume %s from %s?", vols[0].ID, label)
+				}
+				if selected != "" {
+					return a.updateWorkspaceVolumeBindings(ctx, client, ws, selected, "", false)
+				}
+				ok, err := a.confirmDestructive(message)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return prompt.ErrCancelled
+				}
+			}
+			ws, err = client.Workspaces.DetachVolume(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -1117,16 +1106,8 @@ func (a *App) newWorkspaceWaitCmd() *cobra.Command {
 				return missingFlagError("--status", "Pass --status <s1,s2> (e.g. --status available,failed).")
 			}
 
-			client, _, err := a.requireClient()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
-			ref := ""
-			if len(args) > 0 {
-				ref = args[0]
-			}
-			wsID, _, err := a.resolveWorkspace(ctx, client, ref, nil, "no workspaces found", "Select a workspace to wait on:")
+			client, wsID, _, err := a.resolveCommandWorkspace(ctx, firstArg(args), nil, "", "Select a workspace to wait on:")
 			if err != nil {
 				return err
 			}

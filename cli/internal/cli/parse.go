@@ -443,3 +443,28 @@ func addWaitFlags(cmd *cobra.Command, wait *bool, noWait *bool, waitTimeout *str
 	f.BoolVar(noWait, "no-wait", false, "Return immediately without waiting for completion")
 	f.StringVar(waitTimeout, "wait-timeout", fmt.Sprintf("%ds", defaultWaitTimeoutSeconds), "Maximum duration to wait (e.g. 5m, 300)")
 }
+
+func validateMountPathInput(raw string) error {
+	_, err := validateMountPath(raw)
+	return err
+}
+
+func validateOptionalResourceName(raw string) error {
+	_, err := validateResourceName(raw, true)
+	return err
+}
+
+func validateNonEmpty(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return fmt.Errorf("a value is required")
+	}
+	return nil
+}
+
+func validatePort(raw string) error {
+	port, err := strconv.Atoi(raw)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("enter a port number between 1 and 65535")
+	}
+	return nil
+}
